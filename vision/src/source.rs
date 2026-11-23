@@ -162,3 +162,49 @@ mod tests {
         );
     }
 }
+
+/// Static background followed by a rectangular surface approaching, pausing and retreating.
+#[derive(Default)]
+pub struct SyntheticSource {
+    index: u32,
+}
+impl FrameSource for SyntheticSource {
+    fn next_frame(&mut self) -> Result<Option<DepthFrame>> {
+        let t = self.index;
+        if t >= 100 {
+            return Ok(None);
+        }
+        self.index += 1;
+        let (w, h) = (96, 64);
+        let mut pixels = vec![3000; w * h];
+        if (10..70).contains(&t) && t != 24 {
+            let x = 12 + (t.min(30) - 10) as usize;
+            let z = if t < 30 {
+                1600 - (t - 10) * 10
+            } else if t < 45 {
+                1400
+            } else {
+                1400 + (t - 45) * 10
+            };
+            for y in 20..44 {
+                pixels[y * w + x..y * w + x + 24].fill(z as u16)
+            }
+        }
+        Ok(Some(DepthFrame {
+            info: FrameInfo {
+                width: w,
+                height: h,
+                metric: true,
+                ticks: t * 100,
+                arrival_ns: t as u64 * 40_000_000,
+                intrinsics: CameraIntrinsics::nominal(w, h),
+                health: CaptureHealth {
+                    frames: t as u64 + 1,
+                    state: "Streaming".into(),
+                    ..Default::default()
+                },
+            },
+            pixels,
+        }))
+    }
+}
