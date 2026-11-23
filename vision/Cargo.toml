@@ -13,3 +13,4 @@ font8x8 = "0.3"
 base64 = "0.22"
 reqwest = {version = "0.13",default-features=false,features=["json","rustls"]}
 tokio = {version="1",features=["rt","time","sync","macros"]}
+eframe = {version="0.37",default-features=false,features=["glow","default_fonts","wayland","x11"]}

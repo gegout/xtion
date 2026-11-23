@@ -1,3 +1,4 @@
+mod viewer;
 use std::{
     fs::File,
     io::{BufReader, BufWriter},
@@ -25,6 +26,31 @@ fn run() -> Result<()> {
         c.tokens = val("--ai-tokens").unwrap_or("400").parse()?;
         c.refresh =
             std::time::Duration::from_millis(val("--ai-refresh-ms").unwrap_or("2000").parse()?);
+    }
+    if !flag("--headless") {
+        if std::env::var("LIBGL_ALWAYS_SOFTWARE").as_deref() != Ok("1") {
+            use std::os::unix::process::CommandExt;
+            return Err(std::process::Command::new(std::env::current_exe()?)
+                .args(&args)
+                .env("LIBGL_ALWAYS_SOFTWARE", "1")
+                .exec()
+                .into());
+        }
+        let input = if let Some(p) = val("--replay") {
+            xtion_vision::pipeline::Input::Replay(p.into())
+        } else if flag("--synthetic") {
+            xtion_vision::pipeline::Input::Synthetic
+        } else {
+            xtion_vision::pipeline::Input::Live
+        };
+        return viewer::launch(viewer::Options {
+            input,
+            ai: ai_config,
+            threshold: val("--threshold-mm").unwrap_or("100").parse()?,
+            record: val("--record").map(str::to_owned),
+            screenshot: val("--png").map(str::to_owned),
+            seconds: val("--seconds").map(str::parse).transpose()?,
+        });
     }
     let refresh = ai_config.as_ref().map(|c| c.refresh).unwrap_or_default();
     let mut ai = ai_config
