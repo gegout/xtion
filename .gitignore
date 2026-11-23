@@ -1,0 +1,12 @@
+/target/
+*.usbraw
+*.pgm
+.env
+.env.*
+!.env.example
+
+__pycache__/
+/recordings/
+/docs/traces/
+/tests/fixtures/*.bin
+*.xtv

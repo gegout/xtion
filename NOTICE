@@ -1,0 +1,14 @@
+Xtion
+Copyright 2026 Xtion contributors
+
+Protocol research and geometric shift-to-depth conversion are informed by the
+OpenNI2 PS1080 implementation:
+Copyright (C) 2012 PrimeSense Ltd.
+https://github.com/OpenNI/OpenNI2
+Licensed under the Apache License, Version 2.0.
+
+Xtion is an independent Rust implementation, not an OpenNI distribution.
+No SensorKinect implementation code is included.
+
+The rusb and vendored libusb dependencies retain their respective licenses;
+see Cargo.lock and the dependencies' package sources for license texts.

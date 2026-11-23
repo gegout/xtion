@@ -1,0 +1,16 @@
+[package]
+name = "xtion"
+version = "0.1.0"
+edition = "2024"
+description = "Experimental native USB access to PrimeSense PS1080 depth sensors"
+license = "Apache-2.0"
+exclude = ["**/__pycache__/**"]
+
+[dependencies]
+rusb = { version = "0.9", features = ["vendored"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"

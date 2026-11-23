@@ -1,0 +1,12 @@
+{
+  "provenance": "Actual native USB capture on 1d27:0601 firmware 5.8.22, direct laptop port 1-2; extracted from /tmp/xtion-live-large.usbraw.",
+  "format": "uncompressed little-endian 16-bit shifts, VGA/30",
+  "fixture": "depth-vga-shift16.bin",
+  "expected_width": 640,
+  "expected_height": 480,
+  "expected_eof_ticks": 1755969030,
+  "expected_calculated_mm_min": 472,
+  "expected_calculated_mm_max": 4463,
+  "expected_invalid_pixels": 103109,
+  "accuracy": "Per-device calibration conversion; physical distance accuracy unverified."
+}

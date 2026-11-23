@@ -1,0 +1,9 @@
+{
+  "source": "Actual 001/053 packed EP81 read on port 1-2, firmware 5.8.22",
+  "sha256": "0a290308583f7721c395d8d1f78a743e40c80fba2434c52b879627377ebd14fa",
+  "wire_bytes": 424068,
+  "ticks": 2645751169,
+  "invalid": 67637,
+  "min_mm": 420,
+  "max_mm": 4241
+}

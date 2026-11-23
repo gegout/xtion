@@ -1,0 +1,20 @@
+# Device lifecycle and recovery
+
+Discovery returns descriptors. Opening claims sensor interface 0, reads the active alternate and checks the PS1080 version. The public state is initially Opened. Starting requires PS mode and all three firmware streams idle. One mutable borrow owns each transaction. The reader owns a clone of the same claimed handle and only reads EP81. A readiness notification precedes configuration.
+
+Stream enable is a single parameter write. The host waits 300 ms before its first EP0 reply read for stream mode changes. The enable deadline is 700 ms. An ACK or an expired reply deadline after a completed write proceeds to frame verification. Two complete frames must have advancing device ticks. A NACK, interrupted/failed write, malformed reply or stalled endpoint is an error. Old responses must match both ID and opcode of the previous transaction. Explicit NOT_READY responses have bounded retries.
+
+Stop enters Stopping, disables firmware depth while reads are active, reads back each restored parameter, joins the reader, drains residual bytes, requires two consecutive 100 ms endpoint timeouts, and restores the original alternate. Failed restoration keeps the saved values and enters RecoveryRequired. The worker joins on failure as well. A second stop on a verified Idle handle is inexpensive. Drop attempts cleanup on active sessions. Explicit stop is needed to obtain its result.
+
+## Consumer behavior
+
+* Ordinary frame reads tolerate temporary USB timeouts and skip damaged frames up to a five-second frame deadline. After a stall, endpoint pipe error or disconnection, read_depth_frame makes one bounded recovery and restart attempt. read_depth_frame_timeout observes the supplied frame deadline and leaves retry policy to the caller. Using a short deadline preserves partial frames.
+* For explicit recovery, call sensor.recover(false). The method closes the old claim, rediscovers by bus, port chain, VID/PID, device revision and serial if present, queries PS mode and stream parameters, and checks endpoint silence. In-process recovery retains the saved volatile values for restoration. A fresh process cannot reconstruct configuration lost with a terminated owner.
+* Recovering a disappeared device polls every 300 ms within a 30-second retry budget; each USB operation also has its own finite timeout. Failed attempts return an error and callers can retry. A sensor without a serial on a different port requires fresh discovery. Identical serial-less units swapped on one port are indistinguishable.
+* The library's default read and plain CLI recovery do not reset hardware. Explicit reset permission in recover(true) or CLI recover --device-reset allows one reset of the exclusively claimed sensor after repeated control failures. A missing target, changed identity or busy interface cannot trigger it. The reset affects the target's audio function as well. A successful recovery requires new protocol and endpoint evidence. The application can inspect last_recovery for attempt count and reset outcome.
+
+A failed shutdown or lost host process can leave physical acquisition active even after local resources are released. Run xtion diagnose --json and xtion recover to reconcile an orphan. A separate diagnostic process cannot know another process's last frame or last recovery and reports those values as null.
+
+The reset limit governs the number of attempts. A Linux device-reset ioctl has kernel-managed completion time and the backoff deadline is checked between USB operations. Acquisition counters restart with each new stream. RecoveryReport records reopen attempts, whether a reset was attempted and the earlier error when available. A successful fresh-process recovery confirms idle operation; earlier volatile settings are known only when an in-process snapshot or independent trace exists.
+
+Run the ignored hardware fault tests explicitly and serially with an idle sensor. Ordinary cargo test uses injected control/reader errors and captured frames without needing USB access. The release binary has no command or environment option for suppressing acknowledgments or faking a disconnection.
