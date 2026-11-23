@@ -56,6 +56,14 @@ impl FrameSource for LiveSource {
 }
 const MAGIC: &[u8; 8] = b"XTVISION";
 fn pixel_count(i: &FrameInfo) -> Result<usize> {
+    if i.width > 2048 || i.height > 2048 || i.width == 0 || i.height > i.width.saturating_mul(4) {
+        return Err("unsupported recording dimensions".into());
+    }
+    if i.intrinsics.source != IntrinsicsSource::Unknown
+        && i.intrinsics.project(0., 0., 1.).is_none()
+    {
+        return Err("invalid recording intrinsics".into());
+    }
     i.width
         .checked_mul(i.height)
         .filter(|n| (1..=4_194_304).contains(n))
@@ -140,7 +148,9 @@ impl<R: Read> FrameSource for ReplaySource<R> {
         Ok(Some(DepthFrame {
             info,
             pixels: bytes
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|p| u16::from_le_bytes([p[0], p[1]]))
                 .collect(),
         }))

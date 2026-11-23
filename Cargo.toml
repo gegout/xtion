@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Experimental native USB access to PrimeSense PS1080 depth sensors"
 license = "Apache-2.0"
-exclude = ["**/__pycache__/**"]
+exclude = ["**/__pycache__/**", "/LICENSE", "/recordings/**", "/docs/traces/**", "/tests/fixtures/*.bin"]
 
 [dependencies]
 rusb = { version = "0.9", features = ["vendored"] }

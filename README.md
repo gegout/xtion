@@ -1,10 +1,52 @@
-# Xtion
+# Xtion and Xtion Vision
 
 A small, experimental native Rust USB library and CLI for PrimeSense PS1080
 structured-light depth sensors, intended as a reusable foundation for perception
 applications. Uses `rusb` and open-source libusb directly. No OpenNI, OpenNI2,
 PrimeSense Sensor, SensorKinect, ROS, proprietary runtime, or kernel camera driver
 is installed or required.
+
+The workspace builds two applications. **xtion** probes, captures, diagnoses and stress-tests the USB sensor. **xtion-vision** watches visible depth surfaces, measures how they move, and describes the scene locally. Its desktop and JSON-lines interfaces consume the same perception engine. A configured vision endpoint can add shape hypotheses with evidence IDs.
+
+## Run Xtion Vision
+
+Use Ubuntu with a Rust toolchain compatible with the locked dependencies (tested with Rust 1.99), a C toolchain, and Mesa software OpenGL for the desktop. The USB permissions below apply to live acquisition. Replay and synthetic scenes work without a sensor.
+
+```bash
+cargo build --release --locked --workspace
+target/release/xtion probe
+target/release/xtion-vision
+target/release/xtion-vision --synthetic
+target/release/xtion-vision --headless --seconds 30 --record session.xtv
+target/release/xtion-vision --replay session.xtv --png view.png
+target/release/xtion-vision --headless --fast --replay session.xtv --ply first.ply
+cargo test --workspace --locked
+```
+
+Keep the camera fixed and start with an empty scene. The viewer learns the initial background automatically. Select **Relearn background** after moving the camera. Increasing **Foreground mm** requires larger depth differences. Stop capture before opening a replay or restarting the sensor. The colour legend shows positive axial depth through the configured far limit, with black for missing readings. The live stream currently supplies nominal lateral geometry and device-calibrated axial depth when available.
+
+Headless mode writes an observation per delivered frame and separate event records. Live output favours the latest observation if the reader stalls. Use `--fast --replay` for lossless deterministic analysis of all recorded frames. Ctrl-C ends headless acquisition. `--seconds N` bounds a run. `--record` and `--ply` require a new file. At VGA/30, uncompressed recording uses roughly 1.1 GB per minute. A PNG contains the entire viewer.
+
+### Optional AI
+
+```bash
+target/release/xtion-vision --ai-url http://localhost:8000/v1
+target/release/xtion-vision --ai-url https://api.openai.com/v1 --ai-model MODEL_NAME
+```
+
+For a build that omits the AI HTTP client entirely, use `cargo build -p xtion-vision --release --no-default-features`.
+
+AI is off by default. Enabling it sends reduced depth images, observations, recent events and motion context to the chosen endpoint. Local endpoints can operate without credentials. Set `OPENAI_API_KEY` in the process environment when required. The UI and JSON report hypotheses, their observation IDs and confidence. The local summary continues during discovery, outages or rejected replies.
+
+Discovery tests up to four candidate models under a 30-second overall deadline. Each request times out after eight seconds. Four synthetic quadrant checks establish image use before model selection. Explicit model mode skips discovery. Chat Completions is the default. A missing Chat route falls back to Responses only when the endpoint advertises a matching POST operation in its OpenAPI document. `--ai-candidates`, `--ai-budget-ms`, `--ai-timeout-ms`, `--ai-probe-tokens`, `--ai-tokens` and `--ai-refresh-ms` set limits. The default refresh interval is two seconds and the default interpretation cap is 400 output tokens. Run `xtion-vision --help` for the full CLI.
+
+### Recording format and integration
+
+XTV v1 starts with the eight ASCII bytes `XTVISION` followed by version byte 1. Each record contains a little-endian u32 JSON-header length, a UTF-8 JSON frame header, then width × height little-endian u16 samples in row-major order. The header preserves dimensions, metric or raw units, wrapping device ticks, monotonic arrival nanoseconds, health counters and intrinsics with provenance. EOF at a record boundary terminates the session. A partial record is an error. Only generated scenes ship as replay fixtures.
+
+Applications can use `xtion_vision::perception::Engine::observe`, `DepthFrame::point_cloud`, and the `CloudExport` trait without accessing USB. The [vision architecture](docs/vision-architecture.md), [verified input contract](docs/vision-inputs.md) and [validation report](docs/vision-validation.md) describe geometry, timing, tracking limits and evidence.
+
+## Native driver
 
 **Validated configuration:** ASUS Xtion PRO `1d27:0601`, PS1080 firmware 5.8.22, direct high-speed USB and 640×480 packed depth. Normal shutdown disables depth, verifies settings and checks endpoint silence. The ten-minute test delivered 29.965 complete frames/s after warm-up with two incomplete frames. Twenty consecutive start/stop cycles passed. Firmware 5.8.22 is the latest exact-model release found on ASUS support.
 
@@ -171,4 +213,6 @@ The default single 1 MiB read and eight-slot queue performed best among the sync
 
 `state()`, `last_frame_timestamp()` and `last_recovery()` describe the current object. Use `recover(false)` for bounded in-process recovery. Retain `info().clone()` to identify the same port later. The [recovery design](docs/recovery-design.md) details deadlines, failure states and limits after process death.
 
-Licensed Apache-2.0. Upstream research attribution is in `NOTICE`. Historical host-level experiments are recorded in [recovery findings](docs/recovery.md). Application recovery uses only the target USB device.
+Xtion Vision is MIT licensed under [LICENSE](LICENSE). The existing native driver and its original contributions retain the [Apache License 2.0](LICENSE-APACHE) and [NOTICE](NOTICE). Historical host-level experiments are recorded in [recovery findings](docs/recovery.md). Application recovery uses only the target USB device.
+
+Ordinary workspace tests run without sensor access. With the sensor exclusively available, run the Vision checks with `cargo test --release -p xtion-vision --test live -- --ignored --test-threads=1`. The native driver's historical capture regression reads private fixture files on the validation host. Run that extra check there with `cargo test -p xtion captured_hardware_frame_decodes_to_public_metric_frame -- --ignored`. Git includes the two synthetic Vision recordings. Personal depth captures stay local.

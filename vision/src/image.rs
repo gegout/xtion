@@ -25,7 +25,12 @@ pub fn rgb(f: &DepthFrame, width: usize, far: u16) -> (usize, usize, Vec<u8>) {
             data[(y * width + x) * 3..][..3].copy_from_slice(&c)
         }
     }
-    let label = format!("0+    {:.1}m   black=invalid", far as f64 / 1000.);
+    let label = format!(
+        "{:<pad$}{:.1}m",
+        "near | black=invalid",
+        far as f64 / 1000.,
+        pad = (width / 8).saturating_sub(4)
+    );
     for x in 0..width {
         let c = colour(
             1 + ((far.saturating_sub(1) as usize) * x / width) as u16,

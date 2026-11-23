@@ -8,7 +8,15 @@ pub fn describe(s: &SceneState) -> String {
         );
     }
     if s.objects.is_empty() {
-        return "No persistent foreground region detected.".into();
+        let sectors = ["left", "centre", "right"]
+            .iter()
+            .zip(s.sector_z_m)
+            .filter_map(|(label, z)| z.map(|v| format!("{label} {v:.2} m")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return format!(
+            "No persistent foreground region detected. Median surface depth: {sectors}."
+        );
     }
     s.objects
         .iter()

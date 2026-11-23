@@ -1,3 +1,4 @@
+#![cfg(feature = "ai")]
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{
@@ -22,10 +23,7 @@ fn mock(reply: impl Fn(&str, Value) -> (u16, Value) + Send + 'static) -> Mock {
     let n = Arc::new(AtomicUsize::default());
     let counter = Arc::downgrade(&n);
     thread::spawn(move || {
-        loop {
-            let Some(count) = counter.upgrade() else {
-                break;
-            };
+        while let Some(count) = counter.upgrade() {
             let Ok((mut stream, _)) = sock.accept() else {
                 drop(count);
                 thread::sleep(Duration::from_millis(1));
@@ -209,4 +207,53 @@ fn explicit_mode_ladder_and_disabled() {
     assert_eq!(m.n.load(Ordering::SeqCst), 0);
     assert!(run(&m, true, 500).success);
     assert_eq!(m.n.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn endpoint_dies_after_success_then_recovers_without_blocking_capture() {
+    let calls = AtomicUsize::new(0);
+    let m = mock(move |_, _| {
+        if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+            (0, Value::Null)
+        } else {
+            chat("{\"claims\":[]}")
+        }
+    });
+    let mut a = worker(&m, true, 500);
+    let (s, f) = job();
+    a.submit(s.clone(), f.clone(), Duration::ZERO);
+    assert!(poll(&a, &s).success);
+    let mut changed = (*s).clone();
+    changed.objects[0].region.z += 1.;
+    let changed = Arc::new(changed);
+    a.submit(changed.clone(), f.clone(), Duration::ZERO);
+    assert!(!poll(&a, &changed).success);
+    let mut next = (*changed).clone();
+    next.objects.clear();
+    let next = Arc::new(next);
+    a.submit(next.clone(), f, Duration::ZERO);
+    assert!(poll(&a, &next).success);
+}
+
+#[test]
+fn responses_requires_an_advertised_operation() {
+    let m = mock(|p, b| match p {
+        "/v1/chat/completions" => (405, Value::Null),
+        "/v1/openapi.json" => (200, json!({"paths":{"/v1/responses":{"post":{}}}})),
+        "/v1/responses" => {
+            assert_eq!(b["input"][0]["content"][0]["type"], "input_text");
+            assert_eq!(b["text"]["format"]["type"], "json_schema");
+            (
+                200,
+                json!({"output":[{"content":[{"type":"output_text","text":"{\"claims\":[]}"}]}]}),
+            )
+        }
+        _ => panic!("unexpected route"),
+    });
+    assert!(run(&m, true, 500).success);
+    let unsupported = mock(|p, _| {
+        assert!(!p.ends_with("/responses"));
+        (404, Value::Null)
+    });
+    assert!(!run(&unsupported, true, 500).success);
 }

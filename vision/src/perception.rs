@@ -17,6 +17,8 @@ pub struct TrackedObject {
     pub id: u64,
     pub observation_id: String,
     pub region: SpatialRegion,
+    /// Euclidean distance to centroid when lateral geometry is available.
+    pub distance_m: Option<f64>,
     pub velocity: Option<[f64; 3]>,
     pub speed: Option<f64>,
     pub radial_velocity: f64,
@@ -37,6 +39,8 @@ pub struct SceneState {
     pub ticks: u32,
     pub optics: IntrinsicsSource,
     pub valid_fraction: f64,
+    /// Median valid axial depth in left, centre and right image thirds, in metres.
+    pub sector_z_m: [Option<f64>; 3],
     pub status: &'static str,
     pub health: CaptureHealth,
     pub objects: Vec<TrackedObject>,
@@ -60,6 +64,7 @@ pub struct Engine {
     history: VecDeque<SceneEvent>,
     last: Option<(u32, u64, CaptureHealth)>,
     warmup: u8,
+    obscured: bool,
     pub threshold_mm: u16,
 }
 impl Engine {
@@ -111,6 +116,8 @@ impl Engine {
         self.last = Some((i.ticks, ns, i.health.clone()));
         let mut grid = vec![0u16; gw * gh];
         let mut valid = 0;
+        let mut sectors: [Vec<u16>; 3] =
+            std::array::from_fn(|_| Vec::with_capacity(grid.len() / 3 + 1));
         for gy in 0..gh {
             for gx in 0..gw {
                 let x = gx * STEP;
@@ -136,6 +143,7 @@ impl Engine {
                 }
                 neighbors.sort_unstable();
                 let d = neighbors[1];
+                sectors[x * 3 / w].push(d);
                 let bg = &mut self.background[k];
                 if *bg == 0. || self.warmup < 5 {
                     *bg = if *bg == 0. {
@@ -150,12 +158,60 @@ impl Engine {
                 }
             }
         }
+        let sector_z_m = sectors.each_mut().map(|values| {
+            let middle = values.len() / 2;
+            if values.is_empty() {
+                None
+            } else {
+                Some(f64::from(*values.select_nth_unstable(middle).1) / 1000.)
+            }
+        });
         if self.warmup < 5 && valid > 0 && i.metric {
             self.warmup += 1;
             status = "learning background"
         }
         if valid == 0 {
             status = "no valid depth"
+        }
+        // Missing coverage carries no evidence of a departure. Resume tracking
+        // after visibility returns without deriving velocities across the gap.
+        let obscured = valid * 20 < grid.len() || !i.metric;
+        if obscured || self.obscured {
+            if !i.metric {
+                status = "nonmetric"
+            } else if obscured {
+                status = "insufficient depth coverage"
+            }
+            if obscured != self.obscured {
+                self.event(
+                    ns,
+                    if obscured {
+                        "depth unavailable"
+                    } else {
+                        "depth restored"
+                    },
+                    None,
+                );
+            }
+            for t in &mut self.tracks {
+                t.seen = ns;
+                t.votes = 0;
+            }
+            self.obscured = obscured;
+            if obscured {
+                return SceneState {
+                    id: format!("f{}", self.serial),
+                    ns,
+                    ticks: i.ticks,
+                    optics: i.intrinsics.source,
+                    valid_fraction: valid as f64 / grid.len() as f64,
+                    sector_z_m,
+                    status,
+                    health: i.health.clone(),
+                    objects: vec![],
+                    events: self.history.iter().cloned().collect(),
+                };
+            }
         }
         let mut regions = vec![];
         for start in 0..grid.len() {
@@ -260,6 +316,7 @@ impl Engine {
                     id: self.next,
                     observation_id: String::new(),
                     region: region.clone(),
+                    distance_m: None,
                     velocity: None,
                     speed: None,
                     radial_velocity: 0.,
@@ -309,6 +366,7 @@ impl Engine {
             }
             t.seen = ns;
             t.hits += 1;
+            t.obj.distance_m = region.centroid.map(|p| p.x.hypot(p.y).hypot(p.z));
             t.obj.region = region;
             t.obj.observation_id = format!("f{}-o{}", self.serial, t.obj.id);
             if !t.active && t.hits >= 2 {
@@ -328,6 +386,7 @@ impl Engine {
             ticks: i.ticks,
             optics: i.intrinsics.source,
             valid_fraction: valid as f64 / grid.len() as f64,
+            sector_z_m,
             status,
             health: i.health.clone(),
             objects: visible,

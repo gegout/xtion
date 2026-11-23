@@ -17,7 +17,15 @@ fn fixture_replay_is_repeatable() {
         assert!(a.status.success());
         assert_eq!(a.stdout, run().stdout);
         let s = String::from_utf8(a.stdout).unwrap();
-        assert_eq!(s.lines().count(), 15);
+        assert_eq!(
+            s.lines()
+                .filter(
+                    |line| serde_json::from_str::<serde_json::Value>(line).unwrap()["type"]
+                        == "observation"
+                )
+                .count(),
+            15
+        );
         assert!(s.contains(if name == "still" {
             "No persistent foreground"
         } else {

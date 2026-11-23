@@ -1,0 +1,173 @@
+{
+  "bounded": {
+    "fps": 29.91841733860659,
+    "health": {
+      "bytes": 7656595532,
+      "decode_errors": 9,
+      "discarded_bytes": 7164,
+      "errors": 0,
+      "frames": 18026,
+      "gaps": 23,
+      "incomplete": 31,
+      "missing_enable_ack": false,
+      "queue_drops": 0,
+      "startup_discards": 1,
+      "state": "Streaming",
+      "timeouts": 2
+    },
+    "processed": 18025,
+    "recording_drops": 0,
+    "stage_drops": 0,
+    "status": "stopped",
+    "type": "capture_summary"
+  },
+  "final1": {
+    "fps": 29.968232225001397,
+    "health": {
+      "bytes": 57351664,
+      "decode_errors": 0,
+      "discarded_bytes": 1020,
+      "errors": 0,
+      "frames": 135,
+      "gaps": 0,
+      "incomplete": 1,
+      "missing_enable_ack": false,
+      "queue_drops": 0,
+      "startup_discards": 1,
+      "state": "Streaming",
+      "timeouts": 2
+    },
+    "processed": 134,
+    "recording_drops": 0,
+    "stage_drops": 0,
+    "status": "stopped",
+    "type": "capture_summary"
+  },
+  "final2": {
+    "fps": 29.969536511446478,
+    "health": {
+      "bytes": 57351476,
+      "decode_errors": 0,
+      "discarded_bytes": 1020,
+      "errors": 0,
+      "frames": 135,
+      "gaps": 0,
+      "incomplete": 1,
+      "missing_enable_ack": false,
+      "queue_drops": 0,
+      "startup_discards": 1,
+      "state": "Streaming",
+      "timeouts": 2
+    },
+    "processed": 134,
+    "recording_drops": 0,
+    "stage_drops": 0,
+    "status": "stopped",
+    "type": "capture_summary"
+  },
+  "final3": {
+    "fps": 29.291180688416862,
+    "health": {
+      "bytes": 57300468,
+      "decode_errors": 2,
+      "discarded_bytes": 4092,
+      "errors": 0,
+      "frames": 132,
+      "gaps": 3,
+      "incomplete": 4,
+      "missing_enable_ack": false,
+      "queue_drops": 0,
+      "startup_discards": 1,
+      "state": "Streaming",
+      "timeouts": 2
+    },
+    "processed": 131,
+    "recording_drops": 0,
+    "stage_drops": 0,
+    "status": "stopped",
+    "type": "capture_summary"
+  },
+  "final4": {
+    "fps": 29.965599539043282,
+    "health": {
+      "bytes": 57352500,
+      "decode_errors": 0,
+      "discarded_bytes": 1020,
+      "errors": 0,
+      "frames": 135,
+      "gaps": 2,
+      "incomplete": 1,
+      "missing_enable_ack": false,
+      "queue_drops": 0,
+      "startup_discards": 1,
+      "state": "Streaming",
+      "timeouts": 2
+    },
+    "processed": 134,
+    "recording_drops": 0,
+    "stage_drops": 0,
+    "status": "stopped",
+    "type": "capture_summary"
+  },
+  "final5": {
+    "fps": 29.74269747214072,
+    "health": {
+      "bytes": 57348232,
+      "decode_errors": 1,
+      "discarded_bytes": 1020,
+      "errors": 0,
+      "frames": 134,
+      "gaps": 2,
+      "incomplete": 2,
+      "missing_enable_ack": false,
+      "queue_drops": 0,
+      "startup_discards": 1,
+      "state": "Streaming",
+      "timeouts": 2
+    },
+    "processed": 133,
+    "recording_drops": 0,
+    "stage_drops": 0,
+    "status": "stopped",
+    "type": "capture_summary"
+  },
+  "clock": "FPS from processed intervals over monotonic host arrival time, including startup.",
+  "rss_samples_kib": [
+    {
+      "elapsed_s": 60.03,
+      "rss_kib": 13008
+    },
+    {
+      "elapsed_s": 120.07,
+      "rss_kib": 13012
+    },
+    {
+      "elapsed_s": 180.1,
+      "rss_kib": 13020
+    },
+    {
+      "elapsed_s": 240.13,
+      "rss_kib": 13044
+    },
+    {
+      "elapsed_s": 300.17,
+      "rss_kib": 13084
+    },
+    {
+      "elapsed_s": 360.2,
+      "rss_kib": 13096
+    },
+    {
+      "elapsed_s": 420.23,
+      "rss_kib": 13096
+    },
+    {
+      "elapsed_s": 480.27,
+      "rss_kib": 13136
+    },
+    {
+      "elapsed_s": 540.31,
+      "rss_kib": 13148
+    }
+  ]
+}

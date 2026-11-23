@@ -10,3 +10,8 @@ __pycache__/
 /docs/traces/
 /tests/fixtures/*.bin
 *.xtv
+xtion-view-*.png
+*.ply
+*.mp4
+*.mkv
+/view.png

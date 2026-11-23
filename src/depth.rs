@@ -373,22 +373,31 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "requires private capture fixtures from the validation host"]
     fn captured_hardware_frame_decodes_to_public_metric_frame() {
         use crate::protocol::PacketDecoder;
+        let fixture = |name: &str| {
+            std::fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures")
+                    .join(name),
+            )
+            .expect("private capture fixture")
+        };
         let calibration = Calibration::from_device(
-            include_bytes!("../tests/fixtures/fixed-params-prefix.bin"),
-            u16::from_le_bytes(*include_bytes!("../tests/fixtures/constant-shift.bin")),
+            &fixture("fixed-params-prefix.bin"),
+            u16::from_le_bytes(fixture("constant-shift.bin").try_into().unwrap()),
         )
         .unwrap();
         for (captured, format, timestamp, stats_expected) in [
             (
-                include_bytes!("../tests/fixtures/depth-vga-shift16.bin").as_slice(),
+                fixture("depth-vga-shift16.bin"),
                 WireFormat::Shift16,
                 1755969030,
                 (Some(472), Some(4463), 103109),
             ),
             (
-                include_bytes!("../tests/fixtures/depth-vga-packed11.bin").as_slice(),
+                fixture("depth-vga-packed11.bin"),
                 WireFormat::Packed11,
                 2645751169,
                 (Some(420), Some(4241), 67637),
