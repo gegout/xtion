@@ -57,3 +57,4 @@ pub struct DepthFrame {
     pub info: FrameInfo,
     pub pixels: Vec<u16>,
 }
+pub mod geometry;
