@@ -8,3 +8,8 @@ license = "MIT"
 xtion = { path = ".." }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+png = "0.18"
+font8x8 = "0.3"
+base64 = "0.22"
+reqwest = {version = "0.13",default-features=false,features=["json","rustls"]}
+tokio = {version="1",features=["rt","time","sync","macros"]}
