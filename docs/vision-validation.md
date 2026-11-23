@@ -33,3 +33,18 @@ The first desktop soak revealed that a deadline tied to repaints could overrun w
 The completed ten-minute run used headless mode with the revised pipeline. FPS uses processed frame intervals over monotonic sensor-host arrivals. RSS covers the headless process during that run. Desktop RSS and the five reuse runs are complementary measurements. The first final desktop cycle also recorded 134 frames, all recovered on fast replay. A finite soak cannot establish indefinite stability.
 
 ## Live checklist
+
+The application reopened the sensor after the soak. It processed 2,599 frames at 29.96 FPS while the empty-scene instruction was pending and stopped cleanly on SIGINT. The observed session lasted 86.7 s. No operator confirmation arrived during this session. Spontaneous depth changes cannot establish which action caused them.
+
+| Requested physical condition | Expected observation | Status |
+|---|---|---|
+| Empty field of view | Settled background with no persistent new foreground | Not verified, scene occupancy unconfirmed |
+| Enter from left and stop centrally | Appeared region, increasing image X, then stationary | Not verified |
+| Approach then retreat | Negative then positive axial velocity on the same track | Not verified |
+| Hand moves left to right | Localized lateral motion | Not verified |
+| Leave the field | Disappearance after occlusion grace period | Not verified |
+| Briefly cover sensor | Reduced valid coverage or near-field occlusion followed by restored signal | Not verified |
+
+The remaining instructions depend on the confirmed empty baseline and were deferred. A previous driver-only movement observation is documented in [native validation](validation.md). It does not verify this application’s guided checklist.
+
+An opt-in reuse test launched before the checklist process had finished releasing USB received the expected “Resource busy” error. After release, the same test passed all five cycles in 28.16 s. The test checks metric frames, at least 25 processed FPS, zero perception drops and a successful stop on each cycle.
