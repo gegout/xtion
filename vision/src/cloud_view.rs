@@ -60,6 +60,7 @@ pub struct CloudView {
     colour_by: ColourBy,
     frustum: bool,
     mount: Option<(i32, i32)>,
+    labels: Vec<[u8; 3]>,
     points: PointBuffer,
     rgb: Vec<u8>,
     texture: Option<egui::TextureHandle>,
@@ -97,6 +98,7 @@ impl CloudView {
             colour_by: Default::default(),
             frustum: false,
             mount: None,
+            labels: vec![],
             points: Default::default(),
             rgb: vec![],
             texture: None,
@@ -151,6 +153,14 @@ impl CloudView {
                 }
             }
         });
+        if self.surface_active()
+            && matches!(
+                self.colour_by,
+                ColourBy::Region | ColourBy::Motion | ColourBy::Quality
+            )
+        {
+            self.colour_by = ColourBy::Depth;
+        }
         egui::ComboBox::from_label("Colour")
             .selected_text(format!("{:?}", self.colour_by))
             .show_ui(ui, |ui| {
@@ -163,6 +173,15 @@ impl CloudView {
                         },
                         "Height (manual pose)",
                     );
+                }
+                if !self.surface_active() {
+                    for (value, label) in [
+                        (ColourBy::Region, "Region ID"),
+                        (ColourBy::Motion, "Motion intensity"),
+                        (ColourBy::Quality, "Depth quality"),
+                    ] {
+                        ui.selectable_value(&mut self.colour_by, value, label);
+                    }
                 }
                 for (value, label) in [
                     (ColourBy::Depth, "Depth"),
@@ -345,6 +364,55 @@ impl CloudView {
                     [self.near, self.far],
                     self.colour_by,
                 );
+            }
+        }
+        if changed
+            && !surface
+            && matches!(
+                self.colour_by,
+                ColourBy::Region | ColourBy::Motion | ColourBy::Quality
+            )
+        {
+            let width = frame.info.width;
+            let gw = width.div_ceil(4);
+            self.labels.clear();
+            self.labels
+                .resize(gw * frame.info.height.div_ceil(4), [100; 3]);
+            for o in &snapshot.scene.objects {
+                let tone = if self.colour_by == ColourBy::Motion {
+                    let intensity = o
+                        .filtered_velocity
+                        .map_or(0., |[x, y, z]| x.hypot(y).hypot(z))
+                        .min(1.);
+                    [
+                        (70. + 185. * intensity) as u8,
+                        (200. - 160. * intensity) as u8,
+                        80,
+                    ]
+                } else {
+                    let id = o.id.wrapping_mul(0x9e3779b9);
+                    [
+                        64 + (id % 192) as u8,
+                        64 + ((id >> 8) % 192) as u8,
+                        64 + ((id >> 16) % 192) as u8,
+                    ]
+                };
+                for &k in o.region.sampled_cells() {
+                    self.labels[k] = tone;
+                }
+            }
+            for point in &mut self.points.points {
+                let [x, y] = point.pixel;
+                point.rgb = if self.colour_by == ColourBy::Quality {
+                    match snapshot.quality[y * width + x] {
+                        v if v & 8 != 0 => [200, 68, 115],
+                        v if v & 4 != 0 => [229, 150, 65],
+                        v if v & 2 != 0 => [130, 110, 180],
+                        _ => [90, 190, 145],
+                    }
+                } else {
+                    self.labels[y / 4 * gw + x / 4]
+                };
             }
         }
         if response.clicked()

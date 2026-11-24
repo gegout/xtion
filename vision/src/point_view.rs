@@ -58,6 +58,9 @@ pub enum ColourBy {
     SensorX,
     SensorY,
     Monochrome,
+    Region,
+    Motion,
+    Quality,
     ManualHeight {
         height_cm: i32,
         tilt_deg: i32,
@@ -84,7 +87,7 @@ impl ColourBy {
                 let h = f64::from(height_cm) / 100. - angle.cos() * p.y - angle.sin() * p.z;
                 colour((h.max(0.) * 1000.).round() as u16, (far * 1000.) as u16)
             }
-            Self::Monochrome => [223; 3],
+            Self::Monochrome | Self::Region | Self::Motion | Self::Quality => [223; 3],
         }
     }
 }

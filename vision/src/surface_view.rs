@@ -73,6 +73,7 @@ impl Drop for SurfaceWorker {
 pub struct ScreenFace {
     pub coords: [[f64; 3]; 3],
     pub pixels: [[usize; 2]; 3],
+    sort_depth: f64,
     pub rgb: [u8; 3],
 }
 impl ScreenFace {
@@ -90,6 +91,7 @@ impl ScreenFace {
 #[derive(Default)]
 pub struct SurfaceBuffer {
     pub faces: Vec<ScreenFace>,
+    projected: Vec<Option<[f64; 3]>>,
     orthographic: bool,
 }
 impl SurfaceBuffer {
@@ -103,34 +105,31 @@ impl SurfaceBuffer {
     ) {
         self.faces.clear();
         self.orthographic = camera.orthographic;
-        for t in &mesh.triangles {
-            let vertices = t.map(|k| mesh.vertices[k]);
-            if vertices
-                .iter()
-                .any(|v| !(clip[0]..=clip[1]).contains(&v.point.z))
-            {
-                continue;
+        self.projected.clear();
+        self.projected.extend(mesh.vertices.iter().map(|v| {
+            if (clip[0]..=clip[1]).contains(&v.point.z) {
+                camera.project(v.point, size)
+            } else {
+                None
             }
-            let [Some(a), Some(b), Some(c)] = vertices.map(|v| camera.project(v.point, size))
-            else {
+        }));
+        for t in &mesh.triangles {
+            let [Some(a), Some(b), Some(c)] = t.map(|k| self.projected[k]) else {
                 continue;
             };
+            let vertices = t.map(|k| &mesh.vertices[k]);
             let light = 0.35 + 0.65 * vertices[0].normal[2].abs().min(1.);
             self.faces.push(ScreenFace {
                 coords: [a, b, c],
+                sort_depth: a[2] + b[2] + c[2],
                 pixels: vertices.map(|v| v.pixel),
                 rgb: colour
                     .sample(vertices[0].point, clip[1])
                     .map(|v| (f64::from(v) * light) as u8),
             });
         }
-        self.faces.sort_unstable_by(|a, b| {
-            b.coords
-                .iter()
-                .map(|p| p[2])
-                .sum::<f64>()
-                .total_cmp(&a.coords.iter().map(|p| p[2]).sum())
-        });
+        self.faces
+            .sort_unstable_by(|a, b| b.sort_depth.total_cmp(&a.sort_depth));
     }
     pub fn pick(&self, x: f64, y: f64) -> Option<[usize; 2]> {
         self.faces.iter().rev().find_map(|f| {
@@ -192,8 +191,10 @@ mod tests {
                 coords: [[0., 0., 2.], [10., 0., 2.], [0., 10., 2.]],
                 pixels: [[20, 20], [30, 20], [20, 30]],
                 rgb: [1, 2, 3],
+                sort_depth: 6.,
             }],
             orthographic: false,
+            projected: vec![],
         };
         assert_eq!(b.pick(4., 3.), Some([24, 23]));
         assert_eq!(b.pick(9., 9.), None);

@@ -45,6 +45,9 @@ pub struct SpatialRegion {
     support: std::sync::Arc<[usize]>,
 }
 impl SpatialRegion {
+    pub fn sampled_cells(&self) -> &[usize] {
+        &self.support
+    }
     pub fn contains_pixel(&self, [u, v]: [usize; 2], width: usize) -> bool {
         self.support
             .contains(&(v / STEP * width.div_ceil(STEP) + u / STEP))
