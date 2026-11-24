@@ -411,6 +411,14 @@ impl eframe::App for Viewer {
                     .id_salt("control_scroll")
                     .show(ui, |ui| {
                         self.cloud.controls(ui);
+                        if let Some(plane) = snap.as_ref().and_then(|s| s.scene.floor_estimate) {
+                            ui.label(format!(
+                                "Floor estimate · {:.2} m below sensor · tilt {:.1}° · {:?} optics",
+                                plane.offset,
+                                plane.floor_tilt_deg(),
+                                plane.source
+                            ));
+                        }
                         ui.heading("Capture controls");
                         ui.horizontal(|ui| {
                             if action_button(ui, "Start sensor", ActionIcon::Play, true).clicked() {

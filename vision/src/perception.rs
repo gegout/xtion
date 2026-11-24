@@ -69,6 +69,7 @@ pub struct SceneState {
     pub ns: u64,
     pub ticks: u32,
     pub optics: IntrinsicsSource,
+    pub floor_estimate: Option<crate::planes::Plane>,
     pub valid_fraction: f64,
     /// Median valid axial depth in left, centre and right image thirds, in metres.
     pub sector_z_m: [Option<f64>; 3],
@@ -88,6 +89,7 @@ struct Track {
 #[derive(Default)]
 pub struct Engine {
     background: Vec<f64>,
+    floor: Option<crate::planes::Plane>,
     size: (usize, usize),
     tracks: Vec<Track>,
     next: u64,
@@ -166,6 +168,7 @@ fn occluding_surface(
 impl Engine {
     pub fn recalibrate(&mut self) {
         self.background.clear();
+        self.floor = None;
         self.temporal.clear();
         self.protected.clear();
         self.direct_track.clear();
@@ -204,6 +207,10 @@ impl Engine {
             self.previous_seeds.resize(gw * gh, 0);
             self.prior_ids.resize(gw * gh, 0);
             self.temporal.resize(w * h, (0., 0.));
+        }
+        if self.serial % 30 == 1 {
+            self.floor =
+                crate::planes::floor_candidate(&crate::planes::structural_planes(f, &self.noise));
         }
         let mut status = if i.metric { "tracking" } else { "nonmetric" };
         if let Some((ticks, prev, last)) = &self.last {
@@ -357,6 +364,7 @@ impl Engine {
                     ns,
                     ticks: i.ticks,
                     optics: i.intrinsics.source,
+                    floor_estimate: self.floor,
                     valid_fraction: valid as f64 / grid.len() as f64,
                     sector_z_m,
                     status,
@@ -689,6 +697,7 @@ impl Engine {
             ns,
             ticks: i.ticks,
             optics: i.intrinsics.source,
+            floor_estimate: self.floor,
             valid_fraction: valid as f64 / grid.len() as f64,
             sector_z_m,
             status,
