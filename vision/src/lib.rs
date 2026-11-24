@@ -66,4 +66,5 @@ pub mod pipeline;
 
 pub mod planes;
 pub mod point_view;
+pub mod reconstruction;
 pub mod trajectory;
