@@ -124,11 +124,22 @@ pub fn structural_planes(frame: &DepthFrame, noise: &NoiseModel) -> Vec<Plane> {
     result
 }
 pub fn floor_candidate(planes: &[Plane]) -> Option<Plane> {
+    support_candidate(planes, None)
+}
+pub fn support_candidate(planes: &[Plane], known_mount_m: Option<f64>) -> Option<Plane> {
     planes
         .iter()
         .copied()
         .filter(|p| p.normal[1] > 0.8)
-        .max_by(|a, b| a.offset.total_cmp(&b.offset))
+        .filter(|p| known_mount_m.is_none_or(|h| (h - p.offset).abs() < 0.20))
+        .max_by(|a, b| {
+            known_mount_m
+                .map_or_else(
+                    || a.offset.total_cmp(&b.offset),
+                    |h| (h - b.offset).abs().total_cmp(&(h - a.offset).abs()),
+                )
+                .then(a.cells.cmp(&b.cells))
+        })
 }
 
 #[cfg(test)]

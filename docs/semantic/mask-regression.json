@@ -1,0 +1,42 @@
+{
+  "development": {
+    "entry": {
+      "target": 13092,
+      "recovered": 13092,
+      "background": 25,
+      "other_tracks": 0,
+      "missed": 0,
+      "recall": 1.0,
+      "precision": 0.9980940763894183
+    },
+    "crossing": {
+      "target": 13854,
+      "recovered": 9163,
+      "background": 132,
+      "other_tracks": 0,
+      "missed": 4691,
+      "recall": 0.6613974303450267,
+      "precision": 0.9857988165680474
+    }
+  },
+  "holdout": {
+    "entry": {
+      "target": 20250,
+      "recovered": 19994,
+      "background": 37,
+      "other_tracks": 255,
+      "missed": 1,
+      "recall": 0.987358024691358,
+      "precision": 0.9981528630622535
+    },
+    "crossing": {
+      "target": 12429,
+      "recovered": 12426,
+      "background": 448,
+      "other_tracks": 0,
+      "missed": 3,
+      "recall": 0.9997586290127927,
+      "precision": 0.9652011806742271
+    }
+  }
+}

@@ -367,7 +367,7 @@ fn run() -> Result<()> {
         let mut writer = record
             .map(|p| Recorder::new(BufWriter::new(File::create_new(p)?)))
             .transpose()?;
-        let mut semantics = xtion_vision::semantic::SemanticEngine::default();
+        let mut semantics = None;
         let mut engine = Engine::default();
         engine.threshold_mm = threshold;
         while !done() {
@@ -376,7 +376,9 @@ fn run() -> Result<()> {
                 w.frame(&f)?
             }
             let scene = engine.observe(&f);
-            let graph = semantics.observe(&scene);
+            let graph = semantics
+                .get_or_insert_with(|| xtion_vision::semantic::SemanticEngine::for_frame(&f))
+                .observe(&scene);
             out.emit(Arc::new(scene), Arc::new(f), &graph)?
         }
         src.stop()?;

@@ -32,7 +32,7 @@ const SCRIPT: &[(&str, &str, u64)] = &[
     ("object", "Place the known-size object at two distances", 18),
 ];
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Interval {
     cue: String,
     start_frame: u64,
@@ -64,9 +64,10 @@ fn cue(message: &str) {
     println!("\x1b[2J\x1b[H\x1b[1;33m\x1b#3{message}\n\x1b#4{message}\x1b[0m\x07");
     let _ = io::stdout().flush();
 }
-fn capture(dir: &Path, synthetic: bool) -> Result<()> {
+fn capture(dir: &Path, synthetic: bool, object_mm: Option<[u32; 3]>) -> Result<()> {
     fs::create_dir(dir)?;
     let mut manifest = Vec::new();
+    let host_clock = std::time::Instant::now();
     let mut live = if synthetic {
         None
     } else {
@@ -79,6 +80,10 @@ fn capture(dir: &Path, synthetic: bool) -> Result<()> {
                 let file = dir.join(format!("{base}.xtv"));
                 let mut writer = Recorder::new(BufWriter::new(File::create_new(&file)?))?;
                 let mut sim = SyntheticSource::default();
+                let mut geometry = xtion_vision::perception::Engine::default();
+                geometry.threshold_mm = 100;
+                let mut semantics = None;
+                let mut sidecar = xtion_vision::sidecar::Writer::new(&file)?;
                 let src: &mut dyn FrameSource = match &mut live {
                     Some(s) => s,
                     None => &mut sim,
@@ -98,11 +103,15 @@ fn capture(dir: &Path, synthetic: bool) -> Result<()> {
                     }
                 }
                 cue(message);
-                if !synthetic {
-                    let _ = Command::new("pw-play")
+                let displayed_ns = host_clock.elapsed().as_nanos() as u64;
+                let sound = if !synthetic {
+                    Command::new("pw-play")
                         .arg("/usr/share/sounds/freedesktop/stereo/bell.oga")
-                        .status();
-                }
+                        .spawn()
+                        .ok()
+                } else {
+                    None
+                };
                 let duration = if synthetic {
                     480_000_000
                 } else {
@@ -119,13 +128,25 @@ fn capture(dir: &Path, synthetic: bool) -> Result<()> {
                     if remaining.replace(left) != Some(left) {
                         println!("{left} s remaining");
                     }
+                    let scene = geometry.observe(&f);
+                    let graph = semantics
+                        .get_or_insert_with(|| {
+                            xtion_vision::semantic::SemanticEngine::for_frame(&f)
+                        })
+                        .observe(&scene);
+                    sidecar.push(std::sync::Arc::new(graph), None, vec![]);
                     writer.frame(&f)?;
                     count += 1;
                     if elapsed >= duration {
                         break t;
                     }
                 };
+                let ended_ns = host_clock.elapsed().as_nanos() as u64;
                 writer.finish()?;
+                sidecar.finish()?;
+                if let Some(mut child) = sound {
+                    let _ = child.wait();
+                }
                 let interval = Interval {
                     cue: message.into(),
                     start_frame: 0,
@@ -137,12 +158,12 @@ fn capture(dir: &Path, synthetic: bool) -> Result<()> {
                     label: name.into(),
                 };
                 save(&dir.join(format!("{base}.cue.json")), &interval)?;
-                manifest.push(serde_json::json!({"recording":format!("{base}.xtv"),"split":split,"sha256":digest(&file)?,"cue":format!("{base}.cue.json")}));
+                manifest.push(serde_json::json!({"recording":format!("{base}.xtv"),"split":split,"sha256":digest(&file)?,"cue":format!("{base}.cue.json"),"cue_displayed_host_ns":displayed_ns,"cue_ended_host_ns":ended_ns}));
             }
         }
         save(
             &dir.join("manifest.json"),
-            &serde_json::json!({"schema":"xtion.cues/1","source":if synthetic{"synthetic"}else{"sensor"},"recordings":manifest}),
+            &serde_json::json!({"schema":"xtion.cues/1","source":if synthetic{"synthetic"}else{"sensor"},"known_object_mm":object_mm,"recordings":manifest}),
         )
     })();
     if let Some(s) = live.as_mut() {
@@ -161,6 +182,7 @@ fn review(path: &Path) -> Result<()> {
         "Cue: {}. Enter steps to the next image. Type accept or correct LABEL START END (inclusive frame indices) after inspecting the interval.",
         label.cue
     );
+    let mut reviewed = vec![];
     let mut stamps = vec![];
     while let Some(f) = src.next_frame()? {
         stamps.push(f.info.arrival_ns);
@@ -170,6 +192,9 @@ fn review(path: &Path) -> Result<()> {
             fs::write(&png, image::png(w, h, &rgb)?)?;
         }
         index += 1;
+    }
+    if index == 0 {
+        return Err("empty recording".into());
     }
     for i in (0..index)
         .step_by(5)
@@ -192,16 +217,24 @@ fn review(path: &Path) -> Result<()> {
         match cmd.as_slice() {
             [] => continue,
             ["accept"] => {}
-            ["correct", name, start, end] => {
+            ["save"] if !reviewed.is_empty() => {
+                return save(&path.with_extension("reviewed.json"), &reviewed);
+            }
+            [command @ ("correct" | "add"), name, start, end] => {
                 let (a, b) = (start.parse::<usize>()?, end.parse::<usize>()?);
                 if a > b || b >= stamps.len() {
                     return Err("invalid reviewed bounds".into());
                 }
-                label.label = name.to_string();
+                label.label = name.replace('_', " ");
                 label.start_frame = a as u64;
                 label.end_frame_inclusive = b as u64;
                 label.start_ns = stamps[a];
                 label.end_ns = stamps[b];
+                if *command == "add" {
+                    label.status = "reviewed".into();
+                    reviewed.push(label.clone());
+                    continue;
+                }
             }
             _ => {
                 eprintln!("Unrecognised command");
@@ -209,7 +242,8 @@ fn review(path: &Path) -> Result<()> {
             }
         }
         label.status = "reviewed".into();
-        return save(&path.with_extension("reviewed.json"), &label);
+        reviewed.push(label);
+        return save(&path.with_extension("reviewed.json"), &reviewed);
     }
     Ok(())
 }
@@ -217,8 +251,15 @@ fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [mode, path] if mode == "review" => review(Path::new(path)),
-        [mode, path] if mode == "capture" => capture(Path::new(path), false),
-        [mode, path] if mode == "synthetic" => capture(Path::new(path), true),
+        [mode, path] if mode == "capture" => capture(Path::new(path), false, None),
+        [mode, path] if mode == "synthetic" => capture(Path::new(path), true, None),
+        [mode, path, w, h, d] if mode == "capture" => {
+            let size = [w.parse()?, h.parse()?, d.parse()?];
+            if size.contains(&0) {
+                return Err("object dimensions must be positive mm".into());
+            }
+            capture(Path::new(path), false, Some(size))
+        }
         _ => Err("usage: guided_capture capture|synthetic NEW_DIR, or review FILE.xtv".into()),
     }
 }

@@ -247,14 +247,23 @@ impl Evidence {
             }
     }
 }
-type Job = (
-    Arc<SceneState>,
-    Arc<DepthFrame>,
-    Duration,
-    History,
-    Option<Arc<crate::semantic::SemanticSceneGraph>>,
-);
+#[derive(Clone)]
+struct Job {
+    scene: Arc<SceneState>,
+    frame: Arc<DepthFrame>,
+    refresh: Duration,
+    history: History,
+    graph: Option<Arc<crate::semantic::SemanticSceneGraph>>,
+    question: Option<(String, Vec<u64>)>,
+    priority: u8,
+    serial: u64,
+    at: Instant,
+}
 pub struct Interpreter {
+    consumed: Arc<std::sync::atomic::AtomicU64>,
+    serial: u64,
+    last_entities: Vec<u64>,
+    last_activities: Vec<String>,
     tx: Option<watch::Sender<Option<Job>>>,
     cancel: watch::Sender<bool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -297,6 +306,8 @@ impl Interpreter {
             return Err("invalid AI limits".into());
         }
         let (tx, mut rx) = watch::channel::<Option<Job>>(None);
+        let consumed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let received = consumed.clone();
         let (cancel, mut stop) = watch::channel(false);
         let result = Arc::new(Mutex::new(Report::default()));
         let output = result.clone();
@@ -312,6 +323,7 @@ impl Interpreter {
             rt.block_on(async move {
                 let work = async {
                     let mut api = Api {
+                        rejections: Default::default(),
                         quota: Default::default(),
                         client,
                         responses: Default::default(),
@@ -326,17 +338,38 @@ impl Interpreter {
                     let mut next_start = Instant::now();
                     while rx.changed().await.is_ok() {
                         tokio::time::sleep_until(next_start.into()).await;
-                        let Some((s, f, refresh, history, graph)) = rx.borrow_and_update().clone()
-                        else {
+                        let Some(job) = rx.borrow_and_update().clone() else {
                             continue;
                         };
+                        received.store(job.serial, std::sync::atomic::Ordering::Release);
+                        if job.at.elapsed()
+                            > job.refresh.max(Duration::from_secs(20)) + api.c.timeout
+                        {
+                            continue;
+                        }
+                        let Job {
+                            scene: s,
+                            frame: f,
+                            refresh,
+                            history,
+                            graph,
+                            question,
+                            ..
+                        } = job;
                         api.history = history;
                         let sig = signature(&s);
                         let now = Instant::now();
                         next_start = now + refresh;
-                        let mut report = match api.interpret(&s, &f, graph.as_deref()).await {
+                        let outcome = if let (Some((q, ids)), Some(g)) = (&question, &graph) {
+                            api.dialogue(g, q, ids).await
+                        } else {
+                            api.interpret(&s, &f, graph.as_deref()).await
+                        };
+                        let mut report = match outcome {
                             Ok(mut r) => {
-                                r.text = narrative(&r, &s, api.c.min_words, api.c.max_words);
+                                if question.is_none() {
+                                    r.text = narrative(&r, &s, api.c.min_words, api.c.max_words);
+                                }
                                 api.failures = 0;
                                 r
                             }
@@ -372,6 +405,8 @@ impl Interpreter {
                                 })
                                 .collect();
                         }
+                        report.question = question.map(|(q, _)| q);
+                        report.rejections = api.rejections.clone();
                         report.model = api.model.clone().unwrap_or_default();
                         report.signature = sig;
                         report.scene_id = s.id.clone();
@@ -385,6 +420,10 @@ impl Interpreter {
         });
         Ok(Self {
             tx: Some(tx),
+            consumed,
+            serial: 0,
+            last_entities: vec![],
+            last_activities: vec![],
             cancel,
             thread: Some(thread),
             result,
@@ -403,7 +442,7 @@ impl Interpreter {
     }
 
     pub fn submit(&mut self, s: Arc<SceneState>, f: Arc<DepthFrame>, refresh: Duration) {
-        self.enqueue(s, f, refresh, None);
+        self.enqueue(s, f, refresh, None, None);
     }
     pub fn submit_graph(
         &mut self,
@@ -412,7 +451,20 @@ impl Interpreter {
         refresh: Duration,
         graph: Arc<crate::semantic::SemanticSceneGraph>,
     ) {
-        self.enqueue(s, f, refresh, Some(graph));
+        self.enqueue(s, f, refresh, Some(graph), None);
+    }
+    pub fn ask(
+        &mut self,
+        s: Arc<SceneState>,
+        f: Arc<DepthFrame>,
+        g: Arc<crate::semantic::SemanticSceneGraph>,
+        refresh: Duration,
+        q: String,
+        ids: Vec<u64>,
+    ) {
+        if !q.trim().is_empty() && q.len() <= 1024 {
+            self.enqueue(s, f, refresh, Some(g), Some((q, ids)));
+        }
     }
     fn enqueue(
         &mut self,
@@ -420,6 +472,7 @@ impl Interpreter {
         f: Arc<DepthFrame>,
         refresh: Duration,
         graph: Option<Arc<crate::semantic::SemanticSceneGraph>>,
+        question: Option<(String, Vec<u64>)>,
     ) {
         let sig = signature(&s);
         let sampled = self.history.observe(&s, f.info.width);
@@ -430,18 +483,64 @@ impl Interpreter {
             && result.signature == sig
             && self.last_at.elapsed() >= refresh.max(Duration::from_millis(100));
         drop(result);
-        if self.last.is_empty() || self.event != event || self.last != sig || retry || context_due {
-            self.last_context_ns = s.ns;
-            self.last = sig;
-            self.event = event;
-            self.last_at = Instant::now();
-            self.tx.as_ref().unwrap().send_replace(Some((
-                s,
-                f,
+        let entities = graph
+            .as_ref()
+            .map(|g| g.entities.iter().map(|e| e.id).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let activities = graph
+            .as_ref()
+            .map(|g| {
+                g.activities
+                    .iter()
+                    .filter(|a| a.end_ns.is_none())
+                    .map(|a| a.id.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let priority = if question.is_some() {
+            5
+        } else if entities != self.last_entities {
+            4
+        } else if activities != self.last_activities || event != self.event {
+            3
+        } else if retry {
+            2
+        } else {
+            1
+        };
+        if self.last.is_empty() || priority > 1 || self.last != sig || context_due {
+            self.serial += 1;
+            let job = Job {
+                scene: s,
+                frame: f,
                 refresh,
-                self.history.clone(),
+                history: self.history.clone(),
                 graph,
-            )));
+                question,
+                priority,
+                serial: self.serial,
+                at: Instant::now(),
+            };
+            let ns = job.scene.ns;
+            let sent = self.tx.as_ref().unwrap().send_if_modified(|slot| {
+                if slot.as_ref().is_some_and(|old| {
+                    old.serial > self.consumed.load(std::sync::atomic::Ordering::Acquire)
+                        && old.priority > priority
+                        && old.at.elapsed() < Duration::from_secs(20)
+                }) {
+                    return false;
+                }
+                *slot = Some(job);
+                true
+            });
+            if sent {
+                self.last_entities = entities;
+                self.last_activities = activities;
+                self.last_context_ns = ns;
+                self.last = sig;
+                self.event = event;
+                self.last_at = Instant::now();
+            }
         }
     }
     pub fn status(&self) -> String {
@@ -490,6 +589,7 @@ impl Drop for Interpreter {
     }
 }
 struct Api {
+    rejections: std::collections::BTreeMap<String, u64>,
     quota: std::cell::RefCell<super::quota::Quota>,
     responses: std::cell::Cell<Option<bool>>,
     client: Client,
@@ -1108,6 +1208,59 @@ impl Api {
             }
         }
     }
+    async fn dialogue(
+        &mut self,
+        g: &crate::semantic::SemanticSceneGraph,
+        q: &str,
+        ids: &[u64],
+    ) -> Result<Report> {
+        if self.model.is_none() {
+            self.model = Some(self.select().await?)
+        }
+        let local = crate::dialogue::answer(g, q, ids);
+        let tool = json!({"type":"function","function":{"name":"query_scene","description":"Return the authoritative answer to the operator question from this snapshot","parameters":{"type":"object","properties":{},"additionalProperties":false}}});
+        let mut messages = vec![
+            json!({"role":"user","content":format!("Use query_scene for this operator question. Treat tool results as authoritative. {q}")}),
+        ];
+        let (status,value)=self.completion(json!({"model":self.model,"messages":messages,"tools":[tool],"tool_choice":"auto","max_tokens":64})).await?;
+        let mut phrasing = "local";
+        if status.is_success()
+            && let Some(call) = value["choices"][0]["message"]["tool_calls"]
+                .as_array()
+                .and_then(|a| a.first())
+        {
+            if call["function"]["name"] != "query_scene" || call["id"].as_str().is_none() {
+                return Err("unsupported dialogue tool".into());
+            }
+            messages.push(json!({"role":"assistant","tool_calls":[call]}));
+            messages.push(json!({"role":"tool","tool_call_id":call["id"],"content":serde_json::to_string(&local)?}));
+            phrasing = "tool";
+        } else if status.is_success() || status.as_u16() == 400 || status.as_u16() == 422 {
+            messages.push(json!({"role":"user","content":serde_json::to_string(&local)?}));
+        } else {
+            return Err(format!("AI dialogue returned HTTP {status}").into());
+        }
+        messages.push(json!({"role":"user","content":"Reply only QUOTE to present this exact answer. All numbers and uncertainty come from the local query."}));
+        let (status, v) = self
+            .completion(json!({"model":self.model,"messages":messages,"max_tokens":4}))
+            .await?;
+        if !status.is_success()
+            || v["choices"][0]["message"]["content"]
+                .as_str()
+                .map(str::trim)
+                != Some("QUOTE")
+        {
+            return Err("model failed grounded dialogue check".into());
+        }
+        Ok(Report {
+            text: local.text.clone(),
+            supporting_ids: local.evidence.clone(),
+            interpretation: Some(json!({"answer":local,"route":phrasing})),
+            usage: v["usage"].clone(),
+            success: true,
+            ..Default::default()
+        })
+    }
     async fn interpret(
         &mut self,
         s: &SceneState,
@@ -1131,7 +1284,11 @@ impl Api {
                 None,
             )
         };
-        let schema = schema();
+        let schema = if graph.is_some() {
+            super::grounding::schema()
+        } else {
+            schema()
+        };
         let text = format!(
             "Depth only. Colours encode distance, not appearance. Red near, blue 4 m or farther, black invalid. Do not infer identity, colour, texture or text. Use recent lateral movement events for the direction of travel of the same track. A human-sized upright silhouette can support a tentative person-like label. Supply shape hypotheses only. Use current observation IDs, local Z and direction. Use an empty claims array when uncertain. Return JSON matching {schema}. Context: {}. Current scene: {}",
             self.history.prompt(s),
@@ -1147,7 +1304,7 @@ impl Api {
         parts.push(json!({"type":"text","text":"Current keyframe"}));
         parts.push(img.clone());
         if let Some(surface) = surface {
-            parts.push(json!({"type":"text","text":"Sensor-facing shaded visible surfaces. E marks identify the same entities across images and JSON. Cite their supplied observation IDs. Use only JSON for measurements. Hidden geometry, anatomy, posture and intent are unknown."}));
+            parts.push(json!({"type":"text","text":"Sensor-facing shaded visible surfaces. Use the supplied snapshot id. For each claim copy an E mark, one of its observations, and its JSON z_m. Labels: unknown, person-like shape, hand-like shape, chair-like, table-like, box-like. Use posture unknown. Activity is an ongoing activity ID for the entity or unknown. Relationship must exactly match a supplied predicate and its object; otherwise use unknown and empty other. Change is a supplied activity ID or unknown. Description is either visible surfaces or insufficient evidence. Uncertainty is uncertain, partial visibility or geometry only. Numbers come only from JSON. Hidden geometry, anatomy, intent and appearance are unknown."}));
             parts.push(surface);
         }
         let mut tries = 0;
@@ -1177,6 +1334,56 @@ impl Api {
                 return Err(format!("AI endpoint returned HTTP {status}").into());
             }
             let raw = v["choices"][0]["message"]["content"].as_str().unwrap_or("");
+            if let Some(g) = graph {
+                let packet: Value = serde_json::from_str(&packet)?;
+                match super::grounding::validate(raw, &packet, g) {
+                    Ok((reply, claims)) => {
+                        let mut text = vec![];
+                        for c in &reply.claims {
+                            let shape = if c.label == "unknown" {
+                                "unclassified surface"
+                            } else {
+                                &c.label
+                            };
+                            text.push(format!(
+                                "{} is a possible {} at {:.2} m forward.",
+                                c.entity, shape, c.z_m
+                            ));
+                            if let Some(a) = g.activities.iter().find(|a| a.id == c.activity) {
+                                text.push(format!("This surface is {}.", a.kind));
+                            }
+                        }
+                        if text.is_empty() {
+                            text.push(crate::describe::describe(s));
+                        }
+                        self.previous = Some((
+                            s.id.clone(),
+                            img,
+                            json!({"snapshot":s.id,"previous_interpretation":reply.description,"change":reply.change}),
+                        ));
+                        return Ok(Report {
+                            success: true,
+                            text: text.join(" "),
+                            supporting_ids: claims
+                                .iter()
+                                .map(|c| c.observation_id.clone())
+                                .collect(),
+                            interpretation: Some(json!(reply)),
+                            claims,
+                            usage: v["usage"].clone(),
+                            ..Default::default()
+                        });
+                    }
+                    Err(category) => {
+                        *self.rejections.entry(category.into()).or_default() += 1;
+                        tries += 1;
+                        if tries >= 2 {
+                            return Err(format!("semantic reply rejected: {category}").into());
+                        }
+                        continue;
+                    }
+                }
+            }
             let parsed = raw
                 .find('{')
                 .zip(raw.rfind('}'))

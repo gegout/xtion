@@ -142,6 +142,7 @@ struct Track {
 pub struct Engine {
     background: Vec<f64>,
     floor: Option<crate::planes::Plane>,
+    pub mount_height_m: Option<f64>,
     structural_reference: Vec<u16>,
     size: (usize, usize),
     tracks: Vec<Track>,
@@ -296,8 +297,10 @@ impl Engine {
             }
         }
         if self.serial % 30 == 1 {
-            self.floor =
-                crate::planes::floor_candidate(&crate::planes::structural_planes(f, &self.noise));
+            self.floor = crate::planes::support_candidate(
+                &crate::planes::structural_planes(f, &self.noise),
+                self.mount_height_m,
+            );
         }
         let mut status = if i.metric { "tracking" } else { "nonmetric" };
         if let Some((ticks, prev, last)) = &self.last {

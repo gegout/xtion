@@ -83,6 +83,9 @@ pub struct Report {
     pub history_key: Option<String>,
     pub claims: Vec<Claim>,
     pub label_votes: Vec<crate::semantic::LabelVote>,
+    pub interpretation: Option<serde_json::Value>,
+    pub question: Option<String>,
+    pub rejections: std::collections::BTreeMap<String, u64>,
     pub supporting_ids: Vec<String>,
     pub usage: Value,
     pub latency_ms: u64,
@@ -94,6 +97,8 @@ pub struct Report {
     evidence: Option<worker::Evidence>,
 }
 
+#[cfg(feature = "ai")]
+mod grounding;
 #[cfg(feature = "ai")]
 mod history;
 #[cfg(feature = "ai")]
@@ -131,6 +136,17 @@ impl Interpreter {
         _: std::sync::Arc<crate::DepthFrame>,
         _: Duration,
         _: std::sync::Arc<crate::semantic::SemanticSceneGraph>,
+    ) {
+        match self.0 {}
+    }
+    pub fn ask(
+        &mut self,
+        _: std::sync::Arc<crate::perception::SceneState>,
+        _: std::sync::Arc<crate::DepthFrame>,
+        _: std::sync::Arc<crate::semantic::SemanticSceneGraph>,
+        _: Duration,
+        _: String,
+        _: Vec<u64>,
     ) {
         match self.0 {}
     }

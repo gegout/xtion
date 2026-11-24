@@ -30,6 +30,12 @@ struct RenderSettings {
 }
 type PickResult = Result<(Arc<DepthFrame>, [usize; 2]), &'static str>;
 pub struct CloudView {
+    graph_cache: std::collections::VecDeque<(
+        std::sync::Weak<DepthFrame>,
+        Arc<xtion_vision::semantic::SemanticSceneGraph>,
+    )>,
+    unique_draws: u64,
+    last_drawn: std::sync::Weak<DepthFrame>,
     pub entity_marks: bool,
     pub activity_marks: bool,
     pub relationship_marks: bool,
@@ -73,6 +79,9 @@ impl CloudView {
         Self {
             mode,
             auto_density: true,
+            graph_cache: Default::default(),
+            unique_draws: 0,
+            last_drawn: Default::default(),
             entity_marks: true,
             activity_marks: false,
             relationship_marks: false,
@@ -261,6 +270,9 @@ impl CloudView {
     fn surface_active(&self) -> bool {
         self.mode == View::Surface || self.mode == View::Split && self.surface_in_split
     }
+    pub fn mount_height_cm(&self) -> u16 {
+        self.mount.map_or(0, |(h, _)| h.max(0) as u16)
+    }
     pub fn apply_floor(&mut self, plane: xtion_vision::planes::Plane) {
         self.mount = Some((
             (plane.offset * 100.).round() as i32,
@@ -272,7 +284,7 @@ impl CloudView {
             .first_paint
             .zip(self.last_paint)
             .map_or(0., |(a, b)| b.duration_since(a).as_secs_f64());
-        serde_json::json!({"renderer":if self.cpu{"cpu"}else{"glow"},"draws":self.paints,"draw_interval_s":seconds,"draws_per_second":if seconds>0.{self.paints.saturating_sub(1) as f64/seconds}else{0.},"density_stride_extra":self.load_stride})
+        serde_json::json!({"renderer":if self.cpu{"cpu"}else{"glow"},"draws":self.paints,"distinct_frame_submissions":self.unique_draws,"compositor_presentations":null,"draw_interval_s":seconds,"draws_per_second":if seconds>0.{self.paints.saturating_sub(1) as f64/seconds}else{0.},"density_stride_extra":self.load_stride})
     }
     pub fn pose(&self) -> xtion_vision::geometry::Transform {
         self.mount
@@ -314,6 +326,11 @@ impl CloudView {
             if self.submitted.as_ref().is_none_or(|(old, step, erode)| {
                 !Arc::ptr_eq(input, old) || *step != settings.stride || *erode != settings.erode
             }) {
+                if self.graph_cache.len() == 8 {
+                    self.graph_cache.pop_front();
+                }
+                self.graph_cache
+                    .push_back((Arc::downgrade(input), snapshot.graph.clone()));
                 worker.submit(input.clone(), settings);
                 self.submitted = Some((input.clone(), settings.stride, settings.erode));
             }
@@ -348,6 +365,11 @@ impl CloudView {
         self.first_paint.get_or_insert(now);
         self.last_paint = Some(now);
         self.paints += 1;
+        let key = Arc::downgrade(frame);
+        if !key.ptr_eq(&self.last_drawn) {
+            self.unique_draws += 1;
+            self.last_drawn = key;
+        }
         self.sample_draws += 1;
         let start = *self.sample_since.get_or_insert(now);
         let elapsed = now.duration_since(start).as_secs_f64();
@@ -586,8 +608,17 @@ impl CloudView {
                 }
             }
         }
-        if Arc::ptr_eq(frame, input) {
-            for e in &snapshot.graph.entities {
+        let matching_graph = if Arc::ptr_eq(frame, input) {
+            Some(snapshot.graph.as_ref())
+        } else {
+            self.graph_cache
+                .iter()
+                .rev()
+                .find(|p| p.0.ptr_eq(&Arc::downgrade(frame)))
+                .map(|p| p.1.as_ref())
+        };
+        if let Some(graph) = matching_graph {
+            for e in &graph.entities {
                 if let Some([x, y, z]) = e.position_m
                     && let Some(p) = self.camera.project(Point3D { x, y, z }, size)
                 {
@@ -595,7 +626,7 @@ impl CloudView {
                         &painter,
                         rect.min + Vec2::new(p[0] as f32, p[1] as f32),
                         e,
-                        &snapshot.graph,
+                        graph,
                     );
                 }
                 if self.entity_marks
@@ -714,7 +745,7 @@ impl Drop for CloudView {
             let seconds = last.duration_since(first).as_secs_f64();
             eprintln!(
                 "{}",
-                serde_json::json!({"type":"point_view_summary","draws":self.paints,"active_seconds":seconds,
+                serde_json::json!({"type":"point_view_summary","draws":self.paints,"distinct_frame_submissions":self.unique_draws,"compositor_presentations":null,"active_seconds":seconds,
                 "draws_per_second":if seconds>0. {(self.paints-1) as f64/seconds}else{0.},
                 "renderer":if self.cpu {"cpu"} else {"glow"}})
             );

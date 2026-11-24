@@ -101,3 +101,69 @@ fn local_questions_use_only_visible_measurements() {
     assert_eq!(ask("distance to E999").source, "unknown");
     assert_eq!(ask("recent events").source, "historical");
 }
+#[test]
+fn ai_labels_require_three_distinct_observations_and_expire_on_split() {
+    use xtion_vision::semantic::{HypothesisStore, LabelVote, Provenance};
+    let mut s = fixture();
+    s.objects.truncate(1);
+    let mut engine = SemanticEngine::default();
+    let mut store = HypothesisStore::default();
+    for i in 0..3 {
+        s.ns += 1_000_000_000;
+        s.objects[0].region.quality = 1.;
+        let mut g = engine.observe(&s);
+        // Keep the track alive across the inter-request interval.
+        engine.timeout_ns = 2_000_000_000;
+        let e = &g.entities[0];
+        let vote = LabelVote {
+            entity: e.id,
+            members: e.members.clone(),
+            ns: g.ns,
+            evidence: format!("obs{i}"),
+            label: "box-like".into(),
+        };
+        for _ in 0..2 {
+            store.apply(&mut g, std::slice::from_ref(&vote));
+        }
+        assert_eq!(g.entities[0].labels.len(), usize::from(i == 2));
+        if i == 2 {
+            assert_eq!(g.entities[0].labels[0].provenance, Provenance::AiHypothesis);
+            g.entities[0].members.push(2);
+            store.apply(&mut g, &[]);
+            assert!(g.entities[0].labels.is_empty());
+        }
+    }
+}
+#[test]
+fn known_mount_rejects_an_incompatible_tabletop() {
+    use xtion_vision::planes::{Plane, support_candidate};
+    let plane = |offset| Plane {
+        offset,
+        normal: [0., 1., 0.],
+        cells: 20,
+        source: xtion_vision::IntrinsicsSource::Nominal,
+    };
+    let surfaces = [plane(0.6), plane(1.2)];
+    assert_eq!(
+        support_candidate(&surfaces, Some(1.18)).unwrap().offset,
+        1.2
+    );
+    assert!(support_candidate(&surfaces[..1], Some(1.18)).is_none());
+}
+#[test]
+fn observation_motion_reconnects_new_fragment_id_after_brief_loss() {
+    let mut s = fixture();
+    s.objects.truncate(1);
+    let mut e = SemanticEngine::default();
+    let a = e.observe(&s);
+    let obj = s.objects.pop().unwrap();
+    s.ns += 100_000_000;
+    e.observe(&s);
+    s.ns += 100_000_000;
+    s.objects.push(obj);
+    s.objects[0].id = 99;
+    s.objects[0].region.centroid.as_mut().unwrap().x += 0.06;
+    let b = e.observe(&s);
+    assert_eq!(a.entities[0].id, b.entities[0].id);
+    assert_eq!(b.entities[0].member_history.len(), 2);
+}

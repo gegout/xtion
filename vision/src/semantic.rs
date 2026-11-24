@@ -110,6 +110,17 @@ impl Default for SemanticEngine {
     }
 }
 impl SemanticEngine {
+    /// Deterministic recording namespace derived once from the first source observation.
+    pub fn for_frame(f: &crate::DepthFrame) -> Self {
+        let mut hash = 0xcbf29ce484222325u64;
+        for &v in f.pixels.iter().step_by(31) {
+            hash = (hash ^ u64::from(v)).wrapping_mul(0x100000001b3);
+        }
+        Self::new(format!(
+            "xtv-{:08x}-{:x}-{hash:016x}",
+            f.info.ticks, f.info.arrival_ns
+        ))
+    }
     pub fn new(session: impl Into<String>) -> Self {
         Self {
             session: session.into(),
@@ -149,6 +160,7 @@ impl SemanticEngine {
             return graph;
         }
         let tracks: Vec<_> = s.objects.iter().take(16).collect();
+        let visible_ids = tracks.iter().map(|o| o.id).collect::<BTreeSet<_>>();
         let mut groups: Vec<Vec<&TrackedObject>> = vec![];
         let mut votes = BTreeMap::new();
         for t in &tracks {
@@ -195,6 +207,35 @@ impl SemanticEngine {
                 })
                 .max_by_key(|&(n, id)| (n, std::cmp::Reverse(id)))
                 .map(|(_, id)| id)
+                .or_else(|| {
+                    // Match only a genuinely missing track with compatible observed velocity.
+                    // A similarly positioned stationary neighbour cannot acquire its identity.
+                    let p = main.region.centroid?;
+                    let v = main.filtered_velocity?;
+                    if !main.moving || dist(v, [0.; 3]) < 0.12 {
+                        return None;
+                    }
+                    self.active
+                        .values()
+                        .filter(|e| {
+                            !used.contains(&e.id)
+                                && e.moving
+                                && e.members.iter().all(|m| !visible_ids.contains(m))
+                        })
+                        .filter_map(|e| {
+                            let q = e.position_m?;
+                            let w = e.velocity_m_s?;
+                            let dt = s.ns.checked_sub(e.last_ns)? as f64 / 1e9;
+                            if dist(v, w) > 0.12 || dt <= 0. || dt > 0.6 {
+                                return None;
+                            }
+                            let d =
+                                dist([p.x, p.y, p.z], std::array::from_fn(|k| q[k] + w[k] * dt));
+                            (d < 0.06).then_some((d, e.id))
+                        })
+                        .min_by(|a, b| a.0.total_cmp(&b.0))
+                        .map(|(_, id)| id)
+                })
                 .unwrap_or_else(|| {
                     self.next += 1;
                     self.next

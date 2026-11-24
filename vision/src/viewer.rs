@@ -495,6 +495,18 @@ impl Viewer {
                     &self.selected_entities,
                 );
                 self.answer = format!("{} · {} {}", a.source, a.text, a.evidence.join(", "));
+                if self.frozen.is_none()
+                    && let Some(worker) = &mut self.ai
+                {
+                    worker.ask(
+                        s.scene.clone(),
+                        s.frame.clone(),
+                        s.graph.clone(),
+                        self.config.refresh,
+                        self.question.clone(),
+                        self.selected_entities.clone(),
+                    );
+                }
             }
             ui.label(&self.answer);
         });
@@ -682,7 +694,7 @@ impl eframe::App for Viewer {
                 egui::ScrollArea::vertical()
                     .id_salt("control_scroll")
                     .show(ui, |ui| {
-                        self.cloud.controls(ui);
+                        self.cloud.controls(ui);self.pipe.mount_height_cm.store(self.cloud.mount_height_cm(),Relaxed);
                         if let Some(plane) = snap.as_ref().and_then(|s| s.scene.floor_estimate) {
                             if ui.button("Use this surface as the floor").clicked() {
                                 self.cloud.apply_floor(plane);
@@ -757,9 +769,10 @@ impl eframe::App for Viewer {
                         }
                         ui.separator();
                         ui.heading("Model connection");
-                        ui.checkbox(&mut self.config.allow_remote_frames,"Allow sending depth to remote endpoint");
+                        if ui.checkbox(&mut self.config.allow_remote_frames,"Allow sending depth to remote endpoint").changed() && !self.config.allow_remote_frames {self.ai=None;}
                         ui.label("Endpoint URL");
                         if ui.text_edit_singleline(&mut self.endpoint).changed() {
+                            self.config.allow_remote_frames=false;
                             // Never carry an entered credential over to a different endpoint.
                             self.api_key = if self.endpoint.trim().trim_end_matches('/')
                                 == "https://api.openai.com/v1"
@@ -944,7 +957,7 @@ impl Drop for Viewer {
         }
         if let Some(path) = &self.benchmark {
             let snap = self.pipe.latest.lock().unwrap();
-            let result = serde_json::json!({"view":self.cloud.metrics(),"elapsed_s":self.start.elapsed().as_secs_f64(),"processed":snap.as_ref().map(|s|s.processed),"processing_fps":snap.as_ref().map(|s|s.fps),"latest_latency_ms":snap.as_ref().map(|s|s.latency_ms),"health":snap.as_ref().map(|s|&s.scene.health),"queue_drops":self.pipe.drops.load(Relaxed)});
+            let result = serde_json::json!({"view":self.cloud.metrics(),"elapsed_s":self.start.elapsed().as_secs_f64(),"processed":snap.as_ref().map(|s|s.processed),"processing_fps":snap.as_ref().map(|s|s.fps),"mean_semantic_ms":snap.as_ref().map(|s|s.mean_semantic_ms),"mean_perception_ms":snap.as_ref().map(|s|s.mean_perception_ms),"latest_latency_ms":snap.as_ref().map(|s|s.latency_ms),"health":snap.as_ref().map(|s|&s.scene.health),"queue_drops":self.pipe.drops.load(Relaxed)});
             if let Err(e) = std::fs::File::create_new(path).and_then(|f| {
                 serde_json::to_writer_pretty(f, &result).map_err(std::io::Error::other)
             }) {

@@ -33,6 +33,8 @@ pub struct Snapshot {
     pub recent_fps: f64,
     pub acquisition_fps: f64,
     pub processing_ms: f64,
+    pub mean_semantic_ms: f64,
+    pub mean_perception_ms: f64,
     pub latency_ms: f64,
     pub quality: Arc<[u8]>,
 }
@@ -121,6 +123,7 @@ pub struct Pipeline {
     pub recording_error: Arc<Mutex<Option<String>>>,
     pub recalibrate: Arc<AtomicBool>,
     pub threshold: Arc<AtomicU16>,
+    pub mount_height_cm: Arc<AtomicU16>,
     pub record: Arc<Mutex<Option<String>>>,
     pub finished: Arc<AtomicBool>,
     capture_fps: Arc<AtomicU16>,
@@ -159,6 +162,7 @@ impl Pipeline {
             recording_drops: Default::default(),
             recording_error: Default::default(),
             recalibrate: Default::default(),
+            mount_height_cm: Default::default(),
             threshold: Arc::new(AtomicU16::new(threshold)),
             record: Arc::new(Mutex::new(record)),
             finished: Default::default(),
@@ -239,6 +243,7 @@ impl Pipeline {
             let _ = recorder.join();
             out.close();
         }));
+        let mount = p.mount_height_cm.clone();
         let (latest, threshold, recal, finished) = (
             p.latest.clone(),
             p.threshold.clone(),
@@ -248,7 +253,9 @@ impl Pipeline {
         p.threads.push(thread::spawn(move || {
             let mut engine = Engine::default();
             let mut first = None;
-            let mut semantics = crate::semantic::SemanticEngine::default();
+            let mut semantics = None;
+            let mut semantic_total = 0.;
+            let mut perception_total = 0.;
             let mut processed = 0;
             let mut recent = VecDeque::new();
             while let Some((received, frame)) = frames.pop() {
@@ -256,11 +263,20 @@ impl Pipeline {
                     engine.recalibrate()
                 }
                 engine.threshold_mm = threshold.load(Relaxed);
+                let height = mount.load(Relaxed);
+                engine.mount_height_m = (height > 0).then_some(f64::from(height) / 100.);
                 let began = Instant::now();
                 let scene = Arc::new(engine.observe(&frame));
-                let graph = Arc::new(semantics.observe(&scene));
+                let geometry_ms = began.elapsed().as_secs_f64() * 1000.;
+                let graph = Arc::new(
+                    semantics
+                        .get_or_insert_with(|| crate::semantic::SemanticEngine::for_frame(&frame))
+                        .observe(&scene),
+                );
                 let processing_ms = began.elapsed().as_secs_f64() * 1000.;
                 processed += 1;
+                perception_total += geometry_ms;
+                semantic_total += processing_ms - geometry_ms;
                 let delta = frame
                     .info
                     .arrival_ns
@@ -300,6 +316,8 @@ impl Pipeline {
                     recent_fps,
                     acquisition_fps,
                     processing_ms,
+                    mean_perception_ms: perception_total / processed as f64,
+                    mean_semantic_ms: semantic_total / processed as f64,
                     latency_ms: received.elapsed().as_secs_f64() * 1000.,
                     quality: engine.quality.as_slice().into(),
                 });

@@ -677,3 +677,60 @@ fn rejected_bearer_is_redacted_from_the_transcript() {
     assert!(log[0].response.as_deref().unwrap().contains("[redacted]"));
     assert!(!log[0].response.as_deref().unwrap().contains(secret));
 }
+
+#[test]
+fn marked_snapshot_validation_rejects_unsupported_claims_before_fusion() {
+    use xtion_vision::semantic::SemanticEngine;
+    let (scene, frame) = job();
+    let graph = Arc::new(SemanticEngine::default().observe(&scene));
+    let e = &graph.entities[0];
+    let good = json!({"snapshot":scene.id,"claims":[{"entity":format!("E{}",e.id),"evidence":e.evidence[0].observation,"label":"box-like","posture":"unknown","activity":"unknown","relationship":"unknown","other":"","z_m":e.median_z_m,"uncertainty":"geometry only"}],"change":"unknown","description":"visible surfaces"});
+    for (field, value, category) in [
+        ("label", json!("red shirt"), "unsupported_label"),
+        ("entity", json!("E999"), "unknown_entity"),
+        ("evidence", json!(""), "unsupported_evidence"),
+        ("z_m", json!(52.), "contradictory_number"),
+        ("activity", json!("walking"), "contradictory_activity"),
+        ("posture", json!("seated"), "unsupported_posture"),
+        (
+            "relationship",
+            json!("behind"),
+            "contradictory_relationship",
+        ),
+        ("snapshot", json!("old"), "stale_snapshot"),
+        (
+            "description",
+            json!("hidden text"),
+            "unsupported_description",
+        ),
+        ("ok", Value::Null, ""),
+    ] {
+        let mut reply = good.clone();
+        match field {
+            "ok" => {}
+            "snapshot" | "description" => reply[field] = value,
+            _ => reply["claims"][0][field] = value,
+        };
+        let m = mock(move |_, body| {
+            let parts = body["messages"][0]["content"].as_array().unwrap();
+            assert_eq!(parts.iter().filter(|p| p["type"] == "image_url").count(), 2);
+            chat(&reply.to_string())
+        });
+        let mut w = worker(&m, true, 500);
+        w.submit_graph(scene.clone(), frame.clone(), Duration::ZERO, graph.clone());
+        let r = poll(&w, &scene);
+        if field == "ok" {
+            assert!(r.success);
+            assert_eq!(r.label_votes[0].entity, e.id)
+        } else {
+            assert!(!r.success);
+            assert_eq!(r.rejections.get(category), Some(&2));
+            assert!(r.label_votes.is_empty())
+        }
+    }
+}
+#[test]
+fn remote_data_requires_explicit_consent_before_network() {
+    let c = Config::new("https://example.com/v1".into());
+    assert!(Interpreter::start(c).is_err());
+}
