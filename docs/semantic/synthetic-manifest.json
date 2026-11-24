@@ -1,121 +1,162 @@
 {
+  "known_object_mm": null,
   "recordings": [
     {
       "cue": "development-empty.cue.json",
+      "cue_displayed_host_ns": 178323,
+      "cue_ended_host_ns": 1139731,
       "recording": "development-empty.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "development"
     },
     {
       "cue": "development-enter.cue.json",
+      "cue_displayed_host_ns": 3277883,
+      "cue_ended_host_ns": 3839532,
       "recording": "development-enter.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "development"
     },
     {
       "cue": "development-lateral.cue.json",
+      "cue_displayed_host_ns": 5845539,
+      "cue_ended_host_ns": 6429513,
       "recording": "development-lateral.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "development"
     },
     {
       "cue": "development-range.cue.json",
+      "cue_displayed_host_ns": 8127089,
+      "cue_ended_host_ns": 8666777,
       "recording": "development-range.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "development"
     },
     {
       "cue": "development-arm.cue.json",
+      "cue_displayed_host_ns": 10422709,
+      "cue_ended_host_ns": 10984919,
       "recording": "development-arm.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "development"
     },
     {
       "cue": "development-sit.cue.json",
+      "cue_displayed_host_ns": 13352353,
+      "cue_ended_host_ns": 14273104,
       "recording": "development-sit.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "development"
     },
     {
       "cue": "development-reach.cue.json",
+      "cue_displayed_host_ns": 16620974,
+      "cue_ended_host_ns": 17602285,
       "recording": "development-reach.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "development"
     },
     {
       "cue": "development-leave.cue.json",
+      "cue_displayed_host_ns": 20363203,
+      "cue_ended_host_ns": 21297555,
       "recording": "development-leave.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "development"
     },
     {
       "cue": "development-occupied.cue.json",
+      "cue_displayed_host_ns": 23798421,
+      "cue_ended_host_ns": 24480841,
       "recording": "development-occupied.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "development"
     },
     {
       "cue": "development-object.cue.json",
+      "cue_displayed_host_ns": 26300067,
+      "cue_ended_host_ns": 26841267,
       "recording": "development-object.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "development"
     },
     {
       "cue": "held-out-empty.cue.json",
+      "cue_displayed_host_ns": 28407609,
+      "cue_ended_host_ns": 28975550,
       "recording": "held-out-empty.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "held-out"
     },
     {
       "cue": "held-out-enter.cue.json",
+      "cue_displayed_host_ns": 31118859,
+      "cue_ended_host_ns": 32037470,
       "recording": "held-out-enter.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "held-out"
     },
     {
       "cue": "held-out-lateral.cue.json",
+      "cue_displayed_host_ns": 34252476,
+      "cue_ended_host_ns": 34824805,
       "recording": "held-out-lateral.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "held-out"
     },
     {
       "cue": "held-out-range.cue.json",
+      "cue_displayed_host_ns": 36806333,
+      "cue_ended_host_ns": 37725812,
       "recording": "held-out-range.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "held-out"
     },
     {
       "cue": "held-out-arm.cue.json",
+      "cue_displayed_host_ns": 39716832,
+      "cue_ended_host_ns": 40414506,
       "recording": "held-out-arm.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "held-out"
     },
     {
       "cue": "held-out-sit.cue.json",
+      "cue_displayed_host_ns": 42553594,
+      "cue_ended_host_ns": 43460187,
       "recording": "held-out-sit.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "held-out"
     },
     {
       "cue": "held-out-reach.cue.json",
+      "cue_displayed_host_ns": 45461596,
+      "cue_ended_host_ns": 46373117,
       "recording": "held-out-reach.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "held-out"
     },
     {
       "cue": "held-out-leave.cue.json",
+      "cue_displayed_host_ns": 48807571,
+      "cue_ended_host_ns": 49754714,
       "recording": "held-out-leave.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "held-out"
     },
     {
       "cue": "held-out-occupied.cue.json",
+      "cue_displayed_host_ns": 51935597,
+      "cue_ended_host_ns": 52863824,
       "recording": "held-out-occupied.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "held-out"
     },
     {
       "cue": "held-out-object.cue.json",
+      "cue_displayed_host_ns": 55149326,
+      "cue_ended_host_ns": 56047093,
       "recording": "held-out-object.xtv",
       "sha256": "a3667e82274e1947110335984fc01e60c1ed1cff0db9f41a396c7d0ea8d56ec2",
       "split": "held-out"
