@@ -75,7 +75,7 @@ impl Output {
             out.flush()?
         }
         let report = self.ai.as_mut().and_then(|a| {
-            a.submit(s.clone(), f, self.refresh);
+            a.submit_graph(s.clone(), f, self.refresh, Arc::new(graph.clone()));
             a.latest(&s)
         });
         let mut w = self.stdout.lock();
@@ -109,7 +109,7 @@ fn run() -> Result<()> {
     let mut idx = 0;
     while idx < args.len() {
         match args[idx].as_str() {
-            "--headless" | "--fast" | "--synthetic" => {}
+            "--allow-remote-frames" | "--headless" | "--fast" | "--synthetic" => {}
             "--noise-config" | "--benchmark" | "--view" | "--point-renderer" | "--capture-fps"
             | "--replay" | "--record" | "--png" | "--export" | "--ply" | "--seconds"
             | "--threshold-mm" | "--ai-url" | "--ai-model" | "--ai-refresh-ms"
@@ -160,6 +160,7 @@ fn run() -> Result<()> {
     let record = val("--record").map(str::to_owned);
     let mut config = val("--ai-url").map(|s| Config::new(s.into()));
     if let Some(c) = &mut config {
+        c.allow_remote_frames = flag("--allow-remote-frames");
         c.model = val("--ai-model").map(str::to_owned);
         c.candidates = val("--ai-candidates").unwrap_or("4").parse()?;
         c.timeout = Duration::from_millis(val("--ai-timeout-ms").unwrap_or("20000").parse()?);

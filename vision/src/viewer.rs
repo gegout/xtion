@@ -518,7 +518,12 @@ impl eframe::App for Viewer {
             && !self.pipe.finished.load(Relaxed)
             && let Some(a) = &mut self.ai
         {
-            a.submit(s.scene.clone(), s.frame.clone(), self.config.refresh);
+            a.submit_graph(
+                s.scene.clone(),
+                s.frame.clone(),
+                self.config.refresh,
+                s.graph.clone(),
+            );
         }
         let ai = snap
             .as_ref()
@@ -635,6 +640,7 @@ impl eframe::App for Viewer {
                         }
                         ui.separator();
                         ui.heading("Model connection");
+                        ui.checkbox(&mut self.config.allow_remote_frames,"Allow sending depth to remote endpoint");
                         ui.label("Endpoint URL");
                         if ui.text_edit_singleline(&mut self.endpoint).changed() {
                             // Never carry an entered credential over to a different endpoint.

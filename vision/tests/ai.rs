@@ -111,6 +111,35 @@ fn discovery_and_known_answer() {
             );
         }
         assert_ne!(b["model"], "embedding");
+        if b["max_tokens"] == 12 {
+            use font8x8::{BASIC_FONTS, UnicodeFonts};
+            let url = b["messages"][0]["content"][1]["image_url"]["url"]
+                .as_str()
+                .unwrap();
+            let data = STANDARD.decode(url.split_once(',').unwrap().1).unwrap();
+            let mut r = png::Decoder::new(std::io::Cursor::new(data))
+                .read_info()
+                .unwrap();
+            let mut pixels = vec![0; r.output_buffer_size().unwrap()];
+            r.next_frame(&mut pixels).unwrap();
+            let left_a = BASIC_FONTS
+                .get('A')
+                .unwrap()
+                .iter()
+                .enumerate()
+                .all(|(y, bits)| {
+                    (0..8).all(|x| {
+                        (pixels[((12 + y) * 64 + 8 + x) * 3] == 255) == (bits & (1 << x) != 0)
+                    })
+                });
+            let (left, right) = if left_a { ("A", "B") } else { ("B", "A") };
+            let near = if pixels[(4 * 64 + 3) * 3] == 255 {
+                left
+            } else {
+                right
+            };
+            return chat(&format!("2 {near} {left}{right}"));
+        }
         if b["max_tokens"] == 4 {
             if b["model"] == "guesser" {
                 return chat("TL");

@@ -9,6 +9,7 @@ pub struct Config {
     pub url: String,
     /// Session-only bearer credential for this endpoint.
     pub api_key: Option<String>,
+    pub allow_remote_frames: bool,
     pub transcript: Option<Transcript>,
     pub model: Option<String>,
     pub candidates: usize,
@@ -44,6 +45,7 @@ impl Config {
                 Self::environment_key()
             },
             url,
+            allow_remote_frames: false,
             transcript: None,
             model: None,
             candidates: 4,
@@ -90,6 +92,8 @@ pub struct Report {
 #[cfg(feature = "ai")]
 mod history;
 #[cfg(feature = "ai")]
+mod marked;
+#[cfg(feature = "ai")]
 mod spatial;
 #[cfg(feature = "ai")]
 mod worker;
@@ -111,6 +115,15 @@ impl Interpreter {
         _: std::sync::Arc<crate::perception::SceneState>,
         _: std::sync::Arc<crate::DepthFrame>,
         _: Duration,
+    ) {
+        match self.0 {}
+    }
+    pub fn submit_graph(
+        &mut self,
+        _: std::sync::Arc<crate::perception::SceneState>,
+        _: std::sync::Arc<crate::DepthFrame>,
+        _: Duration,
+        _: std::sync::Arc<crate::semantic::SemanticSceneGraph>,
     ) {
         match self.0 {}
     }

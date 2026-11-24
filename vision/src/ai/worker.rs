@@ -247,7 +247,13 @@ impl Evidence {
             }
     }
 }
-type Job = (Arc<SceneState>, Arc<DepthFrame>, Duration, History);
+type Job = (
+    Arc<SceneState>,
+    Arc<DepthFrame>,
+    Duration,
+    History,
+    Option<Arc<crate::semantic::SemanticSceneGraph>>,
+);
 pub struct Interpreter {
     tx: Option<watch::Sender<Option<Job>>>,
     cancel: watch::Sender<bool>,
@@ -269,6 +275,17 @@ impl Interpreter {
             || url.fragment().is_some()
         {
             return Err("invalid AI endpoint URL".into());
+        }
+        let local = url.host_str().is_some_and(|h| {
+            h == "localhost"
+                || h.trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        });
+        if !local && !config.allow_remote_frames {
+            return Err(
+                "explicit consent required to send depth data to this remote endpoint".into(),
+            );
         }
         config.validate_words()?;
         if config.timeout.is_zero()
@@ -308,14 +325,15 @@ impl Interpreter {
                     let mut next_start = Instant::now();
                     while rx.changed().await.is_ok() {
                         tokio::time::sleep_until(next_start.into()).await;
-                        let Some((s, f, refresh, history)) = rx.borrow_and_update().clone() else {
+                        let Some((s, f, refresh, history, graph)) = rx.borrow_and_update().clone()
+                        else {
                             continue;
                         };
                         api.history = history;
                         let sig = signature(&s);
                         let now = Instant::now();
                         next_start = now + refresh;
-                        let mut report = match api.interpret(&s, &f).await {
+                        let mut report = match api.interpret(&s, &f, graph.as_deref()).await {
                             Ok(mut r) => {
                                 r.text = narrative(&r, &s, api.c.min_words, api.c.max_words);
                                 api.failures = 0;
@@ -364,6 +382,24 @@ impl Interpreter {
     }
 
     pub fn submit(&mut self, s: Arc<SceneState>, f: Arc<DepthFrame>, refresh: Duration) {
+        self.enqueue(s, f, refresh, None);
+    }
+    pub fn submit_graph(
+        &mut self,
+        s: Arc<SceneState>,
+        f: Arc<DepthFrame>,
+        refresh: Duration,
+        graph: Arc<crate::semantic::SemanticSceneGraph>,
+    ) {
+        self.enqueue(s, f, refresh, Some(graph));
+    }
+    fn enqueue(
+        &mut self,
+        s: Arc<SceneState>,
+        f: Arc<DepthFrame>,
+        refresh: Duration,
+        graph: Option<Arc<crate::semantic::SemanticSceneGraph>>,
+    ) {
         let sig = signature(&s);
         let sampled = self.history.observe(&s, f.info.width);
         let context_due = sampled && s.ns.abs_diff(self.last_context_ns) >= 7_000_000_000;
@@ -378,10 +414,13 @@ impl Interpreter {
             self.last = sig;
             self.event = event;
             self.last_at = Instant::now();
-            self.tx
-                .as_ref()
-                .unwrap()
-                .send_replace(Some((s, f, refresh, self.history.clone())));
+            self.tx.as_ref().unwrap().send_replace(Some((
+                s,
+                f,
+                refresh,
+                self.history.clone(),
+                graph,
+            )));
         }
     }
     pub fn status(&self) -> String {
@@ -671,7 +710,38 @@ impl Api {
             }
         }
 
-        Ok(true)
+        let swap = seed[0] & 1 == 1;
+        let mut pixels = vec![0; 64 * 32 * 3];
+        for y in 4..28 {
+            for x in 2..62 {
+                let left = x < 32;
+                let j = (y * 64 + x) * 3;
+                pixels[j..j + 3].copy_from_slice(if left == swap {
+                    &[255, 0, 0]
+                } else {
+                    &[0, 0, 255]
+                });
+            }
+        }
+        let (left, right) = if seed[0] & 2 == 0 {
+            ("A", "B")
+        } else {
+            ("B", "A")
+        };
+        super::marked::mark(&mut pixels, 64, 32, 8, 12, left);
+        super::marked::mark(&mut pixels, 64, 32, 44, 12, right);
+        let parts = json!([{"type":"text","text":"Quality probe. Red is near and blue far. Return count, nearest letter, then letters left-to-right, separated by spaces. Example format: 3 C CAB."},image_part(image::png(64,32,&pixels)?)]);
+        let (status, v) = self
+            .completion(
+                json!({"model":m,"messages":[{"role":"user","content":parts}],"max_tokens":12}),
+            )
+            .await?;
+        Ok(status.is_success()
+            && v["choices"][0]["message"]["content"]
+                .as_str()
+                .is_some_and(|s| {
+                    s.trim() == format!("2 {} {left}{right}", if swap { left } else { right })
+                }))
     }
     async fn semantic_report(
         &mut self,
@@ -997,20 +1067,34 @@ impl Api {
             }
         }
     }
-    async fn interpret(&mut self, s: &SceneState, f: &DepthFrame) -> Result<Report> {
+    async fn interpret(
+        &mut self,
+        s: &SceneState,
+        f: &DepthFrame,
+        graph: Option<&crate::semantic::SemanticSceneGraph>,
+    ) -> Result<Report> {
         if self.model.is_none() {
             self.model = Some(self.select().await?);
         }
         if self.measurements_only {
             return self.measurements(s, f.info.width).await;
         }
-        let (w, h, rgb) = image::rgb(f, 224, 4000);
-        let img = image_part(image::png(w, h, &rgb)?);
+        let (packet, img, surface) = if let Some(g) = graph {
+            let (p, d, m) = super::marked::package(f, s, g)?;
+            (p, image_part(d), Some(image_part(m)))
+        } else {
+            let (w, h, rgb) = image::rgb(f, 224, 4000);
+            (
+                super::spatial::observations(s),
+                image_part(image::png(w, h, &rgb)?),
+                None,
+            )
+        };
         let schema = schema();
         let text = format!(
             "Depth only. Colours encode distance, not appearance. Red near, blue 4 m or farther, black invalid. Do not infer identity, colour, texture or text. Use recent lateral movement events for the direction of travel of the same track. A human-sized upright silhouette can support a tentative person-like label. Supply shape hypotheses only. Use current observation IDs, local Z and direction. Use an empty claims array when uncertain. Return JSON matching {schema}. Context: {}. Current scene: {}",
             self.history.prompt(s),
-            super::spatial::observations(s)
+            packet
         );
         let mut parts = vec![json!({"type":"text","text":text})];
         if s.objects.iter().any(|o| o.moving)
@@ -1021,6 +1105,10 @@ impl Api {
         }
         parts.push(json!({"type":"text","text":"Current keyframe"}));
         parts.push(img.clone());
+        if let Some(surface) = surface {
+            parts.push(json!({"type":"text","text":"Sensor-facing shaded visible surfaces. E marks identify the same entities across images and JSON. Cite their supplied observation IDs. Use only JSON for measurements. Hidden geometry, anatomy, posture and intent are unknown."}));
+            parts.push(surface);
+        }
         let mut tries = 0;
         loop {
             let mut body = json!({"model":self.model,"messages":[{"role":"user","content":parts}],"max_tokens":self.c.tokens});
