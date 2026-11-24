@@ -312,6 +312,7 @@ impl Interpreter {
             rt.block_on(async move {
                 let work = async {
                     let mut api = Api {
+                        quota: Default::default(),
                         client,
                         responses: Default::default(),
                         c: config,
@@ -441,7 +442,9 @@ impl Interpreter {
         let r = self.result.lock().unwrap();
         // A completed sequence is explicitly narrated in the past tense and attributed
         // to its capture time. A later change cannot invalidate that historical observation.
-        let current = if r
+        let current = if s.ns.saturating_sub(r.arrival_ns) > 30_000_000_000 {
+            false
+        } else if r
             .evidence
             .as_ref()
             .is_some_and(|e| matches!(e.fact, Fact::PastEvent { .. } | Fact::Historical(_)))
@@ -467,6 +470,7 @@ impl Drop for Interpreter {
     }
 }
 struct Api {
+    quota: std::cell::RefCell<super::quota::Quota>,
     responses: std::cell::Cell<Option<bool>>,
     client: Client,
     c: Config,
@@ -482,6 +486,19 @@ fn image_part(data: Vec<u8>) -> Value {
 }
 impl Api {
     async fn call(&self, path: &str, body: Option<Value>) -> Result<(StatusCode, Value)> {
+        let reserve = body.as_ref().map_or(0, |v| {
+            v.to_string().len() as u64
+                + v["max_tokens"]
+                    .as_u64()
+                    .or_else(|| v["max_output_tokens"].as_u64())
+                    .unwrap_or(self.c.tokens.into())
+        });
+        self.quota.borrow_mut().reserve(
+            Instant::now(),
+            self.c.requests_per_minute,
+            self.c.session_tokens,
+            reserve,
+        )?;
         let url = format!("{}/{}", self.c.url.trim_end_matches('/'), path);
         let redact = |s: String| match self.c.api_key.as_deref().filter(|k| !k.is_empty()) {
             Some(key) => s.replace(key, "[redacted]"),
@@ -588,7 +605,11 @@ impl Api {
                 serde_json::from_slice(&bytes).unwrap_or(Value::Null),
             ));
         }
-        Ok((status, serde_json::from_slice(&bytes)?))
+        let value: Value = serde_json::from_slice(&bytes)?;
+        self.quota
+            .borrow_mut()
+            .settle(reserve, value["usage"]["total_tokens"].as_u64());
+        Ok((status, value))
     }
     // A missing Chat route alone provides no evidence that Responses exists.
     // Consult the configured service's own OpenAPI declaration before fallback.
@@ -1153,7 +1174,13 @@ impl Api {
                         claim.z_m = o.region.z;
                     }
                 }
-                let current = json!(s.objects);
+                let current = json!(
+                    s.objects
+                        .iter()
+                        .take(6)
+                        .map(|o| json!({"id":o.id,"region":{"z":o.region.z},"moving":o.moving}))
+                        .collect::<Vec<_>>()
+                );
                 let change = if let Some((_, _, previous)) = &self.previous {
                     let old = previous.as_array().map(Vec::as_slice).unwrap_or_default();
                     let mut changes = Vec::new();

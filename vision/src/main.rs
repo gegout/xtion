@@ -110,11 +110,30 @@ fn run() -> Result<()> {
     while idx < args.len() {
         match args[idx].as_str() {
             "--allow-remote-frames" | "--headless" | "--fast" | "--synthetic" => {}
-            "--noise-config" | "--benchmark" | "--view" | "--point-renderer" | "--capture-fps"
-            | "--replay" | "--record" | "--png" | "--export" | "--ply" | "--seconds"
-            | "--threshold-mm" | "--ai-url" | "--ai-model" | "--ai-refresh-ms"
-            | "--ai-min-words" | "--ai-max-words" | "--ai-timeout-ms" | "--ai-budget-ms"
-            | "--ai-candidates" | "--ai-tokens" | "--ai-probe-tokens" => {
+            "--ai-rpm"
+            | "--ai-session-tokens"
+            | "--noise-config"
+            | "--benchmark"
+            | "--view"
+            | "--point-renderer"
+            | "--capture-fps"
+            | "--replay"
+            | "--record"
+            | "--png"
+            | "--export"
+            | "--ply"
+            | "--seconds"
+            | "--threshold-mm"
+            | "--ai-url"
+            | "--ai-model"
+            | "--ai-refresh-ms"
+            | "--ai-min-words"
+            | "--ai-max-words"
+            | "--ai-timeout-ms"
+            | "--ai-budget-ms"
+            | "--ai-candidates"
+            | "--ai-tokens"
+            | "--ai-probe-tokens" => {
                 idx += 1;
                 if args
                     .get(idx)
@@ -160,6 +179,8 @@ fn run() -> Result<()> {
     let record = val("--record").map(str::to_owned);
     let mut config = val("--ai-url").map(|s| Config::new(s.into()));
     if let Some(c) = &mut config {
+        c.requests_per_minute = val("--ai-rpm").unwrap_or("40").parse()?;
+        c.session_tokens = val("--ai-session-tokens").unwrap_or("4000000").parse()?;
         c.allow_remote_frames = flag("--allow-remote-frames");
         c.model = val("--ai-model").map(str::to_owned);
         c.candidates = val("--ai-candidates").unwrap_or("4").parse()?;

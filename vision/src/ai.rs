@@ -16,6 +16,8 @@ pub struct Config {
     pub timeout: Duration,
     pub budget: Duration,
     pub tokens: u32,
+    pub requests_per_minute: usize,
+    pub session_tokens: u64,
     pub probe_tokens: u32,
     pub refresh: Duration,
     pub min_words: usize,
@@ -52,6 +54,8 @@ impl Config {
             timeout: Duration::from_secs(20),
             budget: Duration::from_secs(30),
             tokens: 400,
+            requests_per_minute: 40,
+            session_tokens: 4_000_000,
             probe_tokens: 4,
             refresh: Duration::from_secs(7),
             min_words: 20,
@@ -93,6 +97,8 @@ pub struct Report {
 mod history;
 #[cfg(feature = "ai")]
 mod marked;
+#[cfg(feature = "ai")]
+mod quota;
 #[cfg(feature = "ai")]
 mod spatial;
 #[cfg(feature = "ai")]
