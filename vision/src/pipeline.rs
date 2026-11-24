@@ -299,12 +299,17 @@ impl Drop for Pipeline {
         for t in self.threads.drain(..) {
             let _ = t.join();
         }
-        if let Some(s) = self.latest.lock().unwrap().as_ref() {
-            eprintln!(
-                "{}",
-                serde_json::json!({"type":"capture_summary","processed":s.processed,"fps":s.fps,"sampled_out":self.sampled_out.load(Relaxed),"stage_drops":self.drops.load(Relaxed),"recording_drops":self.recording_drops.load(Relaxed),"health":s.scene.health,"status":*self.status.lock().unwrap()})
-            );
-        }
+        let latest = self.latest.lock().unwrap();
+        let snapshot = latest.as_ref();
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "type":"capture_summary", "processed":snapshot.map_or(0, |s| s.processed),
+                "fps":snapshot.map(|s| s.fps), "sampled_out":self.sampled_out.load(Relaxed),
+                "stage_drops":self.drops.load(Relaxed), "recording_drops":self.recording_drops.load(Relaxed),
+                "health":snapshot.map(|s| &s.scene.health), "status":*self.status.lock().unwrap()
+            })
+        );
     }
 }
 #[cfg(test)]

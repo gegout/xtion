@@ -122,6 +122,13 @@ pub fn launch(opts: Options) -> Result<()> {
         "Xtion Vision",
         options,
         Box::new(move |cc| {
+            // Use the normal window-close path so Pipeline::drop joins the sensor
+            // and recorder threads before the process exits on SIGINT or SIGTERM.
+            let ctx = cc.egui_ctx.clone();
+            ctrlc::set_handler(move || {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                ctx.request_repaint();
+            })?;
             install_theme(&cc.egui_ctx);
             Ok(Box::new(Viewer::new(opts, &cc.egui_ctx)))
         }),
