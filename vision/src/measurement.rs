@@ -55,6 +55,33 @@ impl Measurement {
         )
     }
 }
+/// Display-only edge-preserving median; raw zeros and the recording stay intact.
+pub fn filtered(frame: &DepthFrame) -> DepthFrame {
+    let mut copy = frame.clone();
+    let w = frame.info.width;
+    let h = frame.info.height;
+    let noise = NoiseModel::default();
+    for y in 0..h.saturating_sub(1) {
+        for x in 0..w.saturating_sub(1) {
+            let i = y * w + x;
+            let d = frame.pixels[i];
+            if d == 0 {
+                continue;
+            }
+            let tol = noise.k_filter * noise.sigma_mm(d.into());
+            let mut v = [d; 3];
+            for (k, n) in [i + 1, i + w].into_iter().enumerate() {
+                let a = frame.pixels[n];
+                if a > 0 && f64::from(a.abs_diff(d)) <= tol {
+                    v[k] = a;
+                }
+            }
+            v.sort_unstable();
+            copy.pixels[i] = v[1];
+        }
+    }
+    copy
+}
 #[cfg(test)]
 mod tests {
     use super::*;

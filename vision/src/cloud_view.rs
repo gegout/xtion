@@ -12,6 +12,7 @@ pub enum View {
     Depth,
     Points,
     Split,
+    Surface,
 }
 #[derive(PartialEq)]
 struct RenderSettings {
@@ -21,9 +22,20 @@ struct RenderSettings {
     radius: i32,
     clip: [f64; 2],
     colour: ColourBy,
+    surface: bool,
+    wire: bool,
+    dots: bool,
     cpu: bool,
 }
 pub struct CloudView {
+    surface_worker: Option<xtion_vision::surface_view::SurfaceWorker>,
+    surface_buffer: xtion_vision::surface_view::SurfaceBuffer,
+    submitted: Option<(Arc<DepthFrame>, usize, usize)>,
+    surface_in_split: bool,
+    wire: bool,
+    dots: bool,
+    erosion: usize,
+    pub picked: Option<Result<[usize; 2], &'static str>>,
     cached: Option<(Arc<DepthFrame>, RenderSettings)>,
     mesh: Arc<egui::Mesh>,
     pub mode: View,
@@ -48,6 +60,14 @@ impl CloudView {
     pub fn new(mode: View, cpu: bool) -> Self {
         Self {
             mode,
+            surface_worker: None,
+            surface_buffer: Default::default(),
+            submitted: None,
+            surface_in_split: false,
+            wire: false,
+            dots: false,
+            erosion: 1,
+            picked: None,
             cached: None,
             mesh: Arc::default(),
             paints: 0,
@@ -72,10 +92,19 @@ impl CloudView {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.mode, View::Depth, "Depth");
             ui.selectable_value(&mut self.mode, View::Points, "3D points");
+            ui.selectable_value(&mut self.mode, View::Surface, "Surface");
             ui.selectable_value(&mut self.mode, View::Split, "Split");
         });
         if self.mode == View::Depth {
             return;
+        }
+        if self.mode == View::Split {
+            ui.checkbox(&mut self.surface_in_split, "Surface in split view");
+        }
+        if self.surface_active() {
+            ui.checkbox(&mut self.wire, "Wireframe");
+            ui.checkbox(&mut self.dots, "Show mesh vertices");
+            ui.add(egui::Slider::new(&mut self.erosion, 0..=2).text("Border erosion (px)"));
         }
         ui.checkbox(&mut self.cpu, "CPU rasterizer");
         ui.checkbox(&mut self.camera.orthographic, "Orthographic");
@@ -130,7 +159,53 @@ impl CloudView {
             self.camera = Orbit::default();
         }
     }
-    pub fn show(&mut self, ui: &mut egui::Ui, frame: &Arc<DepthFrame>) {
+    pub fn ready(&self) -> bool {
+        !self.surface_active() || !self.surface_buffer.faces.is_empty()
+    }
+    fn surface_active(&self) -> bool {
+        self.mode == View::Surface || self.mode == View::Split && self.surface_in_split
+    }
+    pub fn pose(&self) -> xtion_vision::geometry::Transform {
+        self.mount
+            .and_then(|(h, t)| {
+                xtion_vision::geometry::Pose::manual_mount(
+                    f64::from(h) / 100.,
+                    f64::from(t).to_radians(),
+                )
+            })
+            .map_or(xtion_vision::geometry::Transform::IDENTITY, |p| p.transform)
+    }
+    pub fn settings(&self) -> xtion_vision::reconstruction::MeshSettings {
+        xtion_vision::reconstruction::MeshSettings {
+            stride: self.stride,
+            erode: self.erosion,
+            ..Default::default()
+        }
+    }
+    pub fn show(&mut self, ui: &mut egui::Ui, input: &Arc<DepthFrame>, frozen: bool) {
+        let surface = self.surface_active();
+        let output = if surface {
+            let settings = self.settings();
+            let worker = self.surface_worker.get_or_insert_with(Default::default);
+            if self.submitted.as_ref().is_none_or(|(old, step, erode)| {
+                !Arc::ptr_eq(input, old) || *step != settings.stride || *erode != settings.erode
+            }) {
+                worker.submit(input.clone(), settings);
+                self.submitted = Some((input.clone(), settings.stride, settings.erode));
+            }
+            worker.latest()
+        } else {
+            None
+        };
+        if surface
+            && output
+                .as_ref()
+                .is_none_or(|o| frozen && !Arc::ptr_eq(&o.0, input))
+        {
+            ui.label("Reconstructing visible surfaces…");
+            return;
+        }
+        let frame = output.as_ref().map_or(input, |o| &o.0);
         ui.small(format!(
             "{:?} optics · {} · sensor-facing surfaces only",
             frame.info.intrinsics.source,
@@ -177,6 +252,9 @@ impl CloudView {
             clip: [self.near, self.far],
             colour: self.colour_by,
             cpu: self.cpu,
+            surface,
+            wire: self.wire,
+            dots: self.dots,
         };
         let changed = !self
             .cached
@@ -184,19 +262,57 @@ impl CloudView {
             .is_some_and(|(old, key)| Arc::ptr_eq(old, frame) && *key == settings);
         if changed {
             self.cached = Some((Arc::clone(frame), settings));
-            self.points.update(
-                cloud,
-                self.camera,
-                size,
-                NonZeroUsize::new(self.stride).unwrap(),
-                [self.near, self.far],
-                self.colour_by,
+            if let Some(output) = &output {
+                self.surface_buffer.update(
+                    &output.1,
+                    self.camera,
+                    size,
+                    [self.near, self.far],
+                    self.colour_by,
+                );
+            } else {
+                self.points.update(
+                    cloud,
+                    self.camera,
+                    size,
+                    NonZeroUsize::new(self.stride).unwrap(),
+                    [self.near, self.far],
+                    self.colour_by,
+                );
+            }
+        }
+        if response.clicked()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let pos = pos - rect.min;
+            self.picked = Some(
+                if surface {
+                    self.surface_buffer.pick(pos.x.into(), pos.y.into())
+                } else {
+                    self.points.pick([pos.x as i32, pos.y as i32], self.radius)
+                }
+                .ok_or("No visible geometry under pointer"),
             );
         }
         let painter = ui.painter_at(rect);
         if self.cpu {
             if changed {
-                self.points.rasterize(size, self.radius, &mut self.rgb);
+                if surface {
+                    self.surface_buffer
+                        .rasterize(size, self.wire, &mut self.rgb);
+                    if self.dots {
+                        for f in &self.surface_buffer.faces {
+                            for [x, y, _] in f.coords {
+                                if x >= 0. && y >= 0. && x < size[0] as f64 && y < size[1] as f64 {
+                                    let i = (y as usize * size[0] + x as usize) * 3;
+                                    self.rgb[i..i + 3].fill(235);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    self.points.rasterize(size, self.radius, &mut self.rgb);
+                }
                 let image = egui::ColorImage::from_rgb(size, &self.rgb);
                 match &mut self.texture {
                     Some(tex) => {
@@ -226,19 +342,59 @@ impl CloudView {
             if changed {
                 let mesh = Arc::make_mut(&mut self.mesh);
                 mesh.clear();
-                for p in &self.points.points {
-                    let pos = rect.min
-                        + Vec2::new(
-                            (p.center[0] - self.radius) as f32,
-                            (p.center[1] - self.radius) as f32,
+                if surface {
+                    for f in &self.surface_buffer.faces {
+                        let points = f
+                            .coords
+                            .map(|p| rect.min + Vec2::new(p[0] as f32, p[1] as f32));
+                        let c = Color32::from_rgb(f.rgb[0], f.rgb[1], f.rgb[2]);
+                        if !self.wire {
+                            let base = mesh.vertices.len() as u32;
+                            for pos in points {
+                                mesh.colored_vertex(pos, c);
+                            }
+                            mesh.add_triangle(base, base + 1, base + 2);
+                        }
+                        if self.dots {
+                            for pos in points {
+                                mesh.add_colored_rect(
+                                    egui::Rect::from_center_size(pos, Vec2::splat(1.5)),
+                                    Color32::WHITE,
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    for p in &self.points.points {
+                        let pos = rect.min
+                            + Vec2::new(
+                                (p.center[0] - self.radius) as f32,
+                                (p.center[1] - self.radius) as f32,
+                            );
+                        mesh.add_colored_rect(
+                            egui::Rect::from_min_size(
+                                pos,
+                                Vec2::splat((2 * self.radius + 1) as f32),
+                            ),
+                            Color32::from_rgb(p.rgb[0], p.rgb[1], p.rgb[2]),
                         );
-                    mesh.add_colored_rect(
-                        egui::Rect::from_min_size(pos, Vec2::splat((2 * self.radius + 1) as f32)),
-                        Color32::from_rgb(p.rgb[0], p.rgb[1], p.rgb[2]),
-                    );
+                    }
                 }
             }
             painter.add(egui::Shape::mesh(Arc::clone(&self.mesh)));
+            if surface && self.wire {
+                for f in &self.surface_buffer.faces {
+                    let points = f
+                        .coords
+                        .map(|p| rect.min + Vec2::new(p[0] as f32, p[1] as f32));
+                    for j in 0..3 {
+                        painter.line_segment(
+                            [points[j], points[(j + 1) % 3]],
+                            egui::Stroke::new(1., Color32::from_rgb(f.rgb[0], f.rgb[1], f.rgb[2])),
+                        );
+                    }
+                }
+            }
         }
         if self.grid || self.frustum {
             let line = |a: [f64; 3], b: [f64; 3], c: Color32| {

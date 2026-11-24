@@ -23,7 +23,7 @@ use xtion_vision::{
 const HELP: &str = "xtion-vision [--headless] [--replay PATH | --synthetic] [--fast] [--seconds N]
     --capture-fps N     Retain 5..30 live frames/s for processing and recording (default 10)
     --record NEW.xtv    Save raw depth, clocks and health
-    --view depth|points|split   Desktop view (default depth)
+    --view depth|points|surface|split   Desktop view (default depth)
     --point-renderer cpu|glow  Override automatic point rendering path
     --png VIEW.png      Save desktop window
     --export NEW_DIR    Export the first metric snapshot and trajectories (headless)
@@ -173,8 +173,9 @@ fn run() -> Result<()> {
         let initial_view = match val("--view").unwrap_or("depth") {
             "depth" => cloud_view::View::Depth,
             "points" => cloud_view::View::Points,
+            "surface" => cloud_view::View::Surface,
             "split" => cloud_view::View::Split,
-            _ => return Err("expected --view depth, points or split".into()),
+            _ => return Err("expected --view depth, points, surface or split".into()),
         };
         let accelerated = initial_view != cloud_view::View::Depth
             && std::fs::OpenOptions::new()

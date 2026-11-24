@@ -136,6 +136,14 @@ pub fn launch(opts: Options) -> Result<()> {
     .map_err(|e| e.to_string().into())
 }
 struct Viewer {
+    frozen: Option<xtion_vision::pipeline::Snapshot>,
+    picks: Vec<([usize; 2], std::collections::VecDeque<u16>)>,
+    pick_stamp: Option<u64>,
+    units: &'static str,
+    filtered: bool,
+    overlays: bool,
+    export_dir: String,
+    export_job: Option<std::thread::JoinHandle<std::result::Result<(), String>>>,
     cloud: crate::cloud_view::CloudView,
     capture_fps: u16,
     input: Input,
@@ -215,6 +223,14 @@ impl Viewer {
             .map(ToString::to_string)
             .unwrap_or_default();
         Self {
+            frozen: None,
+            picks: vec![],
+            pick_stamp: None,
+            units: "m",
+            filtered: false,
+            overlays: true,
+            export_dir: "xtion-snapshot".into(),
+            export_job: None,
             cloud: crate::cloud_view::CloudView::new(o.initial_view, o.cpu),
             capture_fps: o.capture_fps,
             pipe: Pipeline::with_capture_rate(
@@ -277,7 +293,14 @@ impl Viewer {
         ));
         ui.label(format!("{:.1} processed FPS · gaps {} · incomplete {} · USB errors {} · host drops {} · {} ms since frame",s.recent_fps,health.gaps,health.incomplete,health.errors,health.queue_drops,s.received.elapsed().as_millis()));
         if self.texture_key != (s.processed, self.far) {
-            let (w, h, rgb) = image::rgb(&s.frame, s.frame.info.width, self.far);
+            let copy;
+            let display = if self.filtered {
+                copy = xtion_vision::measurement::filtered(&s.frame);
+                &copy
+            } else {
+                &s.frame
+            };
+            let (w, h, rgb) = image::rgb(display, s.frame.info.width, self.far);
             let img = egui::ColorImage::from_rgb([w, h], &rgb);
             if let Some(t) = &mut self.texture {
                 t.set(img, egui::TextureOptions::NEAREST)
@@ -295,7 +318,18 @@ impl Viewer {
         let scale = (ui.available_width() / size.x)
             .min(ui.available_height() / size.y)
             .max(0.01);
-        let canvas = ui.image((texture.id(), size * scale)).rect;
+        let response =
+            ui.add(egui::Image::new((texture.id(), size * scale)).sense(egui::Sense::click()));
+        let canvas = response.rect;
+        if response.clicked()
+            && let Some(mouse) = response.interact_pointer_pos()
+        {
+            let at = (mouse - canvas.min) / scale;
+            self.pick(&s.frame, [at.x as usize, at.y as usize]);
+        }
+        if !self.overlays {
+            return;
+        }
         let pos = |x: f64, y: f64| canvas.min + Vec2::new(x as f32, y as f32) * scale;
         for o in &s.scene.objects {
             let [x, y, x2, y2] = o.region.bounds;
@@ -327,11 +361,123 @@ impl Viewer {
             }
         }
     }
+    fn pick(&mut self, f: &xtion_vision::DepthFrame, pixel: [usize; 2]) {
+        if let Err(e) = xtion_vision::measurement::measure(f, pixel, 0., &Default::default()) {
+            self.error = e.into();
+            return;
+        }
+        if self.picks.len() == 2 {
+            self.picks.clear();
+        }
+        self.picks.push((pixel, Default::default()));
+        self.pick_stamp = None;
+        self.error.clear();
+    }
+    fn spatial_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        live: Option<&xtion_vision::pipeline::Snapshot>,
+    ) {
+        let Some(live) = live else { return };
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui
+                .button(if self.frozen.is_some() {
+                    "Resume view"
+                } else {
+                    "Freeze frame"
+                })
+                .clicked()
+            {
+                self.frozen = if self.frozen.is_some() {
+                    None
+                } else {
+                    Some(live.clone())
+                };
+                self.texture_key = (0, 0);
+            }
+            if ui.checkbox(&mut self.filtered, "Filtered depth").changed() {
+                self.texture_key = (0, 0);
+            }
+        });
+        let s = self.frozen.as_ref().unwrap_or(live);
+        ui.checkbox(&mut self.overlays, "Depth tracking overlays");
+        ui.collapsing("Measure and inspect",|ui|{
+            ui.label("Click two visible points. Live picks follow their source pixels.");
+            ui.horizontal(|ui|{for unit in ["mm","cm","m"]{ui.selectable_value(&mut self.units,unit,unit);}if ui.button("Clear").clicked(){self.picks.clear();}});
+            let scale=match self.units{"mm"=>1000.,"cm"=>100.,_=>1.};
+            let mut measurements=Vec::new();
+            for (pixel,series) in &mut self.picks{
+                if self.pick_stamp!=Some(s.scene.ns) && let Some(&d)=s.frame.pixels.get(pixel[1]*s.frame.info.width+pixel[0]) && d!=0{
+                    if series.len()==12{series.pop_front();}series.push_back(d);
+                }
+                let mean=series.iter().map(|&v|f64::from(v)).sum::<f64>()/series.len().max(1) as f64;
+                let sd=(series.iter().map(|&v|(f64::from(v)-mean).powi(2)).sum::<f64>()/series.len().saturating_sub(1).max(1) as f64).sqrt();
+                match xtion_vision::measurement::measure(&s.frame,*pixel,sd,&Default::default()){
+                    Ok(m)=>{let p=m.point;let precision=(-(m.sigma_m*scale).log10()).ceil().clamp(0.,3.) as usize;
+                        ui.label(format!("Pixel {}, {} · XYZ ({:.precision$}, {:.precision$}, {:.precision$}) {} · sensor distance {:.precision$} ± {:.precision$} {}",pixel[0],pixel[1],p.x*scale,p.y*scale,p.z*scale,self.units,p.x.hypot(p.y).hypot(p.z)*scale,m.sigma_m*scale,self.units));
+                        measurements.push(m);
+                    }
+                    Err(e)=>{ui.label(e);}
+                }
+            }
+            self.pick_stamp=Some(s.scene.ns);
+            if let [a,b]=measurements.as_slice(){let (axis,d,u)=a.separation(*b);let precision=(-(u*scale).log10()).ceil().clamp(0.,3.) as usize;
+                ui.label(format!("Separation {:.precision$} ± {:.precision$} {} · ΔXYZ ({:.precision$}, {:.precision$}, {:.precision$})",d*scale,u*scale,self.units,axis[0]*scale,axis[1]*scale,axis[2]*scale));}
+            if s.scene.optics!=xtion_vision::IntrinsicsSource::Calibrated{ui.small("Lateral dimensions are approximate.");}
+            if let Some((pixel,_))=self.picks.last() && let Some(o)=s.scene.objects.iter().find(|o|o.region.contains_pixel(*pixel,s.frame.info.width)){
+                let length=o.trajectory.windows(2).map(|pair|{let a=pair[0].1; let b=pair[1].1;(b[0]-a[0]).hypot(b[1]-a[1]).hypot(b[2]-a[2])}).sum::<f64>();
+                ui.label(format!("Track {} · median Z {:.2} m · quality {:.0}% · recent path {:.2} m",o.id,o.region.median_z_m,o.region.quality*100.,length));
+                if let Some([x,y,z])=o.region.extent{ui.label(format!("Visible XYZ extent {x:.2} × {y:.2} × {z:.2} m"));}
+                if let Some([x,y,z])=o.filtered_velocity{ui.label(format!("Velocity ({x:.2}, {y:.2}, {z:.2}) m/s"));}
+            }
+        });
+        ui.collapsing("Export snapshot", |ui| {
+            ui.text_edit_singleline(&mut self.export_dir);
+            if ui
+                .add_enabled(
+                    self.export_job.is_none(),
+                    egui::Button::new("Save geometry and trajectories"),
+                )
+                .clicked()
+            {
+                let snap = s.clone();
+                let dir = self.export_dir.clone();
+                let pose = self.cloud.pose();
+                let settings = self.cloud.settings();
+                self.export_job = Some(std::thread::spawn(move || {
+                    xtion_vision::spatial_export::export(
+                        std::path::Path::new(&dir),
+                        &snap.frame,
+                        &snap.scene,
+                        pose,
+                        settings,
+                    )
+                    .map_err(|e| e.to_string())
+                }));
+            }
+            if ui.button("Save window PNG").clicked() {
+                self.shot = Some(format!("{}-view.png", self.export_dir));
+            }
+        });
+        if self.export_job.as_ref().is_some_and(|j| j.is_finished())
+            && let Some(j) = self.export_job.take()
+        {
+            self.error = match j.join() {
+                Ok(Ok(())) => format!("Saved {}", self.export_dir),
+                Ok(Err(e)) => e,
+                Err(_) => "Snapshot export failed".into(),
+            };
+        }
+    }
     fn restart(&mut self, input: Input) {
         if !self.pipe.finished.load(Relaxed) {
             self.error = "Stop the current capture before opening another source.".into();
             return;
         }
+        self.frozen = None;
+        self.picks.clear();
+        self.pick_stamp = None;
         self.input = input.clone();
         self.pipe =
             Pipeline::with_capture_rate(input, self.threshold, None, None, self.capture_fps);
@@ -419,6 +565,7 @@ impl eframe::App for Viewer {
                                 plane.source
                             ));
                         }
+                        self.spatial_controls(ui, snap.as_ref());
                         ui.heading("Capture controls");
                         ui.horizontal(|ui| {
                             if action_button(ui, "Start sensor", ActionIcon::Play, true).clicked() {
@@ -601,10 +748,12 @@ impl eframe::App for Viewer {
             2.,
             AUBERGINE,
         );
+        let displayed = self.frozen.clone().or_else(|| snap.clone());
         egui::CentralPanel::default().show(ui, |ui| {
             ui.heading(match self.cloud.mode {
                 crate::cloud_view::View::Depth => "Depth view",
                 crate::cloud_view::View::Points => "3D points",
+                crate::cloud_view::View::Surface => "Visible surface",
                 crate::cloud_view::View::Split => "Depth and 3D points",
             });
             ui.label(format!(
@@ -616,18 +765,30 @@ impl eframe::App for Viewer {
             if let Some(error) = self.pipe.recording_error.lock().unwrap().as_ref() {
                 ui.colored_label(Color32::LIGHT_RED, format!("Recording failed: {error}"));
             }
-            if let Some(snapshot) = &snap {
+            if let Some(snapshot) = &displayed {
                 match self.cloud.mode {
                     crate::cloud_view::View::Depth => self.depth_view(ui, snapshot),
-                    crate::cloud_view::View::Points => self.cloud.show(ui, &snapshot.frame),
+                    crate::cloud_view::View::Points | crate::cloud_view::View::Surface => {
+                        self.cloud.show(ui, &snapshot.frame, self.frozen.is_some())
+                    }
                     crate::cloud_view::View::Split => ui.columns(2, |cols| {
                         self.depth_view(&mut cols[0], snapshot);
-                        self.cloud.show(&mut cols[1], &snapshot.frame);
+                        self.cloud
+                            .show(&mut cols[1], &snapshot.frame, self.frozen.is_some());
                     }),
                 }
             }
         });
+        if let Some(result) = self.cloud.picked.take()
+            && let Some(s) = displayed
+        {
+            match result {
+                Ok(pixel) => self.pick(&s.frame, pixel),
+                Err(e) => self.error = e.into(),
+            }
+        }
         if snap.is_some()
+            && self.cloud.ready()
             && let Some(path) = self.shot.take()
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(

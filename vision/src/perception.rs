@@ -44,6 +44,12 @@ pub struct SpatialRegion {
     #[serde(skip)]
     support: std::sync::Arc<[usize]>,
 }
+impl SpatialRegion {
+    pub fn contains_pixel(&self, [u, v]: [usize; 2], width: usize) -> bool {
+        self.support
+            .contains(&(v / STEP * width.div_ceil(STEP) + u / STEP))
+    }
+}
 #[derive(Clone, Debug, Serialize)]
 pub struct TrackedObject {
     pub id: u64,

@@ -70,4 +70,5 @@ pub mod planes;
 pub mod point_view;
 pub mod reconstruction;
 pub mod spatial_export;
+pub mod surface_view;
 pub mod trajectory;

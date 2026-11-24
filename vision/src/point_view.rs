@@ -64,7 +64,7 @@ pub enum ColourBy {
     },
 }
 impl ColourBy {
-    fn sample(self, p: Point3D, far: f64) -> [u8; 3] {
+    pub(crate) fn sample(self, p: Point3D, far: f64) -> [u8; 3] {
         match self {
             Self::Depth => colour((p.z * 1000.).round() as u16, (far * 1000.) as u16),
             Self::SensorX | Self::SensorY => {
