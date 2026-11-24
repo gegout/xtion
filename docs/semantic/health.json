@@ -1,0 +1,10 @@
+{
+  "frames": 8932,
+  "counter_increases": {
+    "gaps": 38,
+    "incomplete": 43,
+    "decode_errors": 6
+  },
+  "runs_of_affected_arrivals": 38,
+  "longest_run_frames": 2
+}

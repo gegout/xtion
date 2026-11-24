@@ -562,11 +562,11 @@ impl eframe::App for Viewer {
                     .show(ui, |ui| {
                         self.cloud.controls(ui);
                         if let Some(plane) = snap.as_ref().and_then(|s| s.scene.floor_estimate) {
-                            if ui.button("Use estimated floor pose").clicked() {
+                            if ui.button("Use this surface as the floor").clicked() {
                                 self.cloud.apply_floor(plane);
                             }
                             ui.label(format!(
-                                "Floor estimate · {:.2} m below sensor · tilt {:.1}° · {:?} optics",
+                                "Support surface, type unknown · {:.2} m below sensor · tilt {:.1}° · {:?} optics",
                                 plane.offset,
                                 plane.floor_tilt_deg(),
                                 plane.source

@@ -15,6 +15,7 @@ fn main() -> Result<()> {
         .map(|s| s.parse::<usize>())
         .transpose()?
         .unwrap_or(0);
+    let reference = std::env::args().nth(3);
     let mut index = 0;
     let mut source = ReplaySource::new(BufReader::new(File::open(&path)?), false)?;
     let mut engine = Engine::default();
@@ -31,6 +32,22 @@ fn main() -> Result<()> {
     let mut movement = HashSet::new();
     while let Some(f) = source.next_frame()? {
         let now = Instant::now();
+        if index == 0
+            && let Some(path) = &reference
+        {
+            let mut clear = ReplaySource::new(BufReader::new(File::open(path)?), false)?;
+            for _ in 0..5 {
+                let sample = clear.next_frame()?.ok_or("short empty-scene reference")?;
+                if !sample.info.metric
+                    || sample.info.intrinsics != f.info.intrinsics
+                    || (sample.info.width, sample.info.height) != (f.info.width, f.info.height)
+                {
+                    return Err("reference camera mismatch".into());
+                }
+                engine.observe(&sample);
+            }
+            engine.begin_referenced_session();
+        }
         let scene = engine.observe(&f);
         index += 1;
         if index <= score_from {

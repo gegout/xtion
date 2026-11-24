@@ -369,3 +369,19 @@ fn sparse_coplanar_change_does_not_label_a_learned_wall_as_a_moving_region() {
         }
     }
 }
+
+#[test]
+fn fresh_motion_events_require_continuous_capture() {
+    let mut source = SyntheticSource::default();
+    let mut engine = Engine::default();
+    while let Some(mut frame) = source.next_frame().unwrap() {
+        frame.info.health.gaps = frame.info.health.frames;
+        let scene = engine.observe(&frame);
+        assert!(
+            !scene
+                .events
+                .iter()
+                .any(|e| e.ns == scene.ns && e.kind == "moving")
+        );
+    }
+}

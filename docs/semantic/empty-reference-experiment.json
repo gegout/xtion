@@ -1,0 +1,16 @@
+{
+  "frames": 1347,
+  "frames_losing_any_visible_id": 811,
+  "frames_with_80pct_dominant_region": 1070,
+  "frames_with_foreground": 1347,
+  "input": "recordings/repositioned-AW5grrSw/occupied.xtv",
+  "largest_id_switches_in_adjacent_nonempty_frames": 0,
+  "largest_id_switches_per_minute": 0.0,
+  "moving_events": 217,
+  "perception_mean_ms": 1.972037116555308,
+  "perception_p95_ms": 2.105899,
+  "regions_mean": 7.558277654046028,
+  "regions_p95": 11,
+  "score_from_frame": 134,
+  "seconds": 45.014436219
+}

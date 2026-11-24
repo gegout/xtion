@@ -219,6 +219,21 @@ fn occluding_surface(
             .all(|&(front, behind)| behind < 3 || front >= behind)
 }
 impl Engine {
+    /// Retain the learned room background when switching from an empty reference to a new session.
+    pub fn begin_referenced_session(&mut self) {
+        self.last = None;
+        self.tracks.clear();
+        self.history.clear();
+        self.serial = 0;
+        self.event_id = 0;
+        self.next = 0;
+        self.obscured = false;
+        self.protected.fill(false);
+        self.direct_track.fill(false);
+        self.previous_seeds.fill(0);
+        self.prior_ids.fill(0);
+        self.temporal.fill((0., 0.));
+    }
     pub fn recalibrate(&mut self) {
         self.background.clear();
         self.floor = None;
@@ -754,7 +769,7 @@ impl Engine {
             matched[idx] = true;
             let t = &mut self.tracks[idx];
             let dt = ns.saturating_sub(t.seen) as f64 * 1e-9;
-            if dt > 0. {
+            if dt > 0. && status == "tracking" {
                 let dz = (region.z - t.obj.region.z) / dt;
                 t.obj.radial_velocity = dz;
                 t.obj.velocity = region
