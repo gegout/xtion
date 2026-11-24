@@ -38,6 +38,9 @@ pub struct SpatialRegion {
     pub samples: usize,
     /// Fraction of visible samples with no range, edge or repeatability warning.
     pub quality: f64,
+    pub median_z_m: f64,
+    pub bounds_m: Option<[[f64; 3]; 2]>,
+    pub clipped: bool,
     #[serde(skip)]
     support: std::sync::Arc<[usize]>,
 }
@@ -53,6 +56,10 @@ pub struct TrackedObject {
     pub radial_velocity: f64,
     pub direction: &'static str,
     pub moving: bool,
+    pub filtered_velocity: Option<[f64; 3]>,
+    pub trajectory: Vec<(u64, [f64; 3])>,
+    pub visible_seconds: f64,
+    pub stationary_seconds: f64,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct SceneEvent {
@@ -80,6 +87,7 @@ pub struct SceneState {
 }
 struct Track {
     obj: TrackedObject,
+    filter: crate::metric_track::MetricTrack,
     seen: u64,
     hits: u32,
     votes: i8,
@@ -354,6 +362,7 @@ impl Engine {
                 t.seen = ns;
                 t.votes = 0;
                 t.path = Default::default();
+                t.filter = Default::default();
             }
             self.obscured = obscured;
             if obscured {
@@ -553,7 +562,19 @@ impl Engine {
                         self.direct_track[k] = seeds * 2 >= count;
                     }
                     let n = count as f64;
+                    let mut depths: Vec<_> = component
+                        .iter()
+                        .map(|&cell| f.pixels[(cell / gw) * STEP * w + cell % gw * STEP])
+                        .collect();
+                    let mid = depths.len() / 2;
+                    let median_z_m = f64::from(*depths.select_nth_unstable(mid).1) / 1000.;
                     regions.push(SpatialRegion {
+                        median_z_m,
+                        bounds_m: lo[0].is_finite().then_some([lo, hi]),
+                        clipped: bounds[0] == 0
+                            || bounds[1] == 0
+                            || bounds[2] / STEP + 1 == gw
+                            || bounds[3] / STEP + 1 == gh,
                         bounds,
                         center: [sum[0] / n, sum[1] / n],
                         z: sum[2] / n,
@@ -602,7 +623,18 @@ impl Engine {
                     // Preserve the established silhouette when a small nearby fragment
                     // has a closer image centroid than the main body.
                     let area_ratio = (region.samples as f64 / r.samples as f64).ln().abs();
-                    (s < 80. && dz < 0.65).then_some((k, s + 60. * dz + 32. * area_ratio))
+                    let metric_cost = if let Some(p) = region.centroid {
+                        t.filter.cost(
+                            p,
+                            ns,
+                            self.noise.sigma_mm(p.z * 1000.) / 1000.,
+                            region.extent.map_or(0., |v| v[0].hypot(v[1]).hypot(v[2])),
+                        )?
+                    } else {
+                        0.
+                    };
+                    (s < 80. && dz < 0.65)
+                        .then_some((k, s + 60. * dz + 32. * area_ratio + metric_cost))
                 })
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             let idx = if let Some((k, _)) = choice {
@@ -619,10 +651,15 @@ impl Engine {
                     radial_velocity: 0.,
                     direction: "steady",
                     moving: false,
+                    filtered_velocity: None,
+                    trajectory: vec![],
+                    visible_seconds: 0.,
+                    stationary_seconds: 0.,
                 };
                 matched.push(false);
                 self.tracks.push(Track {
                     obj,
+                    filter: Default::default(),
                     seen: ns,
                     hits: 0,
                     votes: 0,
@@ -661,6 +698,20 @@ impl Engine {
                 } else {
                     "steady"
                 };
+            }
+            if let Some(p) = region.centroid {
+                t.obj.filtered_velocity =
+                    t.filter
+                        .observe(p, ns, self.noise.sigma_mm(p.z * 1000.) / 1000.);
+                t.obj.trajectory = t.filter.history();
+            }
+            if dt <= 0.1 {
+                t.obj.visible_seconds += dt;
+                if t.obj.moving {
+                    t.obj.stationary_seconds = 0.;
+                } else {
+                    t.obj.stationary_seconds += dt;
+                }
             }
             t.seen = ns;
             t.hits += 1;

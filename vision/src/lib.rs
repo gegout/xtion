@@ -64,6 +64,7 @@ pub mod image;
 pub mod perception;
 pub mod pipeline;
 
+mod metric_track;
 pub mod planes;
 pub mod point_view;
 pub mod reconstruction;
