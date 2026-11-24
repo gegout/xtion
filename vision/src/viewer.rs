@@ -786,11 +786,9 @@ impl eframe::App for Viewer {
                 }
             }
         });
-        if let Some(result) = self.cloud.picked.take()
-            && let Some(s) = displayed
-        {
+        if let Some(result) = self.cloud.picked.take() {
             match result {
-                Ok(pixel) => self.pick(&s.frame, pixel),
+                Ok((frame, pixel)) => self.pick(&frame, pixel),
                 Err(e) => self.error = e.into(),
             }
         }

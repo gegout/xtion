@@ -16,6 +16,7 @@ pub enum View {
 }
 #[derive(PartialEq)]
 struct RenderSettings {
+    erosion: usize,
     camera: Orbit,
     rect: egui::Rect,
     stride: usize,
@@ -27,6 +28,7 @@ struct RenderSettings {
     dots: bool,
     cpu: bool,
 }
+type PickResult = Result<(Arc<DepthFrame>, [usize; 2]), &'static str>;
 pub struct CloudView {
     auto_density: bool,
     load_stride: usize,
@@ -41,7 +43,7 @@ pub struct CloudView {
     wire: bool,
     dots: bool,
     erosion: usize,
-    pub picked: Option<Result<[usize; 2], &'static str>>,
+    pub picked: Option<PickResult>,
     cached: Option<(Arc<DepthFrame>, RenderSettings)>,
     mesh: Arc<egui::Mesh>,
     pub mode: View,
@@ -318,6 +320,7 @@ impl CloudView {
             surface,
             wire: self.wire,
             dots: self.dots,
+            erosion: self.erosion,
         };
         let changed = !self
             .cached
@@ -354,6 +357,7 @@ impl CloudView {
                 } else {
                     self.points.pick([pos.x as i32, pos.y as i32], self.radius)
                 }
+                .map(|pixel| (frame.clone(), pixel))
                 .ok_or("No visible geometry under pointer"),
             );
         }

@@ -92,6 +92,10 @@ impl Output {
 }
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.as_slice() == ["--version"] {
+        println!("xtion-vision {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     if args.iter().any(|v| v == "--help" || v == "-h") {
         println!("{HELP}");
         return Ok(());
