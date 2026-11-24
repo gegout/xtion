@@ -30,6 +30,10 @@ pub struct Snapshot {
     pub processed: u64,
     pub fps: f64,
     pub recent_fps: f64,
+    pub acquisition_fps: f64,
+    pub processing_ms: f64,
+    pub latency_ms: f64,
+    pub quality: Arc<[u8]>,
 }
 /// Select at most one complete frame per arrival-time bin. A rate change
 /// starts a fresh bin sequence; native VGA/30 passes every complete frame.
@@ -250,7 +254,9 @@ impl Pipeline {
                     engine.recalibrate()
                 }
                 engine.threshold_mm = threshold.load(Relaxed);
+                let began = Instant::now();
                 let scene = Arc::new(engine.observe(&frame));
+                let processing_ms = began.elapsed().as_secs_f64() * 1000.;
                 processed += 1;
                 let delta = frame
                     .info
@@ -262,15 +268,20 @@ impl Pipeline {
                     0.
                 };
                 let now = frame.info.arrival_ns;
-                recent.push_back(now);
+                recent.push_back((now, frame.info.health.frames));
                 while recent.len() > 120
                     || recent
                         .front()
-                        .is_some_and(|t| now.saturating_sub(*t) > 1_000_000_000)
+                        .is_some_and(|t| now.saturating_sub(t.0) > 1_000_000_000)
                 {
                     recent.pop_front();
                 }
-                let span = now - recent[0];
+                let span = now - recent[0].0;
+                let acquisition_fps = if span > 0 {
+                    frame.info.health.frames.saturating_sub(recent[0].1) as f64 * 1e9 / span as f64
+                } else {
+                    0.
+                };
                 let recent_fps = if span > 0 {
                     (recent.len() - 1) as f64 * 1e9 / span as f64
                 } else {
@@ -283,6 +294,10 @@ impl Pipeline {
                     processed,
                     fps,
                     recent_fps,
+                    acquisition_fps,
+                    processing_ms,
+                    latency_ms: received.elapsed().as_secs_f64() * 1000.,
+                    quality: engine.quality.as_slice().into(),
                 });
             }
             finished.store(true, Release);

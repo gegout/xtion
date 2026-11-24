@@ -102,6 +102,7 @@ fn action_button(
 pub struct Options {
     pub initial_view: crate::cloud_view::View,
     pub cpu: bool,
+    pub benchmark: Option<String>,
     pub input: Input,
     pub capture_fps: u16,
     pub ai: Option<Config>,
@@ -144,6 +145,7 @@ struct Viewer {
     overlays: bool,
     export_dir: String,
     export_job: Option<std::thread::JoinHandle<std::result::Result<(), String>>>,
+    benchmark: Option<String>,
     cloud: crate::cloud_view::CloudView,
     capture_fps: u16,
     input: Input,
@@ -223,6 +225,7 @@ impl Viewer {
             .map(ToString::to_string)
             .unwrap_or_default();
         Self {
+            benchmark: o.benchmark,
             frozen: None,
             picks: vec![],
             pick_stamp: None,
@@ -401,6 +404,7 @@ impl Viewer {
             }
         });
         let s = self.frozen.as_ref().unwrap_or(live);
+        ui.small(format!("Acquisition {:.1} FPS · perception {:.1} FPS · render {:.1} FPS · {:.1} ms processing · {:.1} ms arrival to result · {:.0}% valid",live.acquisition_fps,live.recent_fps,self.cloud.render_fps,live.processing_ms,live.latency_ms,100.*live.scene.valid_fraction));
         ui.checkbox(&mut self.overlays, "Depth tracking overlays");
         ui.collapsing("Measure and inspect",|ui|{
             ui.label("Click two visible points. Live picks follow their source pixels.");
@@ -558,6 +562,9 @@ impl eframe::App for Viewer {
                     .show(ui, |ui| {
                         self.cloud.controls(ui);
                         if let Some(plane) = snap.as_ref().and_then(|s| s.scene.floor_estimate) {
+                            if ui.button("Use estimated floor pose").clicked() {
+                                self.cloud.apply_floor(plane);
+                            }
                             ui.label(format!(
                                 "Floor estimate · {:.2} m below sensor · tilt {:.1}° · {:?} optics",
                                 plane.offset,
@@ -769,12 +776,12 @@ impl eframe::App for Viewer {
                 match self.cloud.mode {
                     crate::cloud_view::View::Depth => self.depth_view(ui, snapshot),
                     crate::cloud_view::View::Points | crate::cloud_view::View::Surface => {
-                        self.cloud.show(ui, &snapshot.frame, self.frozen.is_some())
+                        self.cloud.show(ui, snapshot, self.frozen.is_some())
                     }
                     crate::cloud_view::View::Split => ui.columns(2, |cols| {
                         self.depth_view(&mut cols[0], snapshot);
                         self.cloud
-                            .show(&mut cols[1], &snapshot.frame, self.frozen.is_some());
+                            .show(&mut cols[1], snapshot, self.frozen.is_some());
                     }),
                 }
             }
@@ -809,6 +816,22 @@ impl eframe::App for Viewer {
     }
 }
 
+impl Drop for Viewer {
+    fn drop(&mut self) {
+        if let Some(job) = self.export_job.take() {
+            let _ = job.join();
+        }
+        if let Some(path) = &self.benchmark {
+            let snap = self.pipe.latest.lock().unwrap();
+            let result = serde_json::json!({"view":self.cloud.metrics(),"elapsed_s":self.start.elapsed().as_secs_f64(),"processed":snap.as_ref().map(|s|s.processed),"processing_fps":snap.as_ref().map(|s|s.fps),"latest_latency_ms":snap.as_ref().map(|s|s.latency_ms),"health":snap.as_ref().map(|s|&s.scene.health),"queue_drops":self.pipe.drops.load(Relaxed)});
+            if let Err(e) = std::fs::File::create_new(path).and_then(|f| {
+                serde_json::to_writer_pretty(f, &result).map_err(std::io::Error::other)
+            }) {
+                eprintln!("Benchmark output failed: {e}");
+            }
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -833,6 +856,7 @@ mod tests {
                 ai: None,
                 threshold: 100,
                 record: None,
+                benchmark: None,
                 initial_view: Default::default(),
                 cpu: true,
                 screenshot: None,
@@ -948,6 +972,7 @@ mod tests {
                 ai: None,
                 threshold: 100,
                 record: None,
+                benchmark: None,
                 initial_view: Default::default(),
                 cpu: true,
                 screenshot: None,

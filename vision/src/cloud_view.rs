@@ -28,6 +28,12 @@ struct RenderSettings {
     cpu: bool,
 }
 pub struct CloudView {
+    auto_density: bool,
+    load_stride: usize,
+    sample_since: Option<std::time::Instant>,
+    sample_draws: u64,
+    pub render_fps: f64,
+    pub trails: bool,
     surface_worker: Option<xtion_vision::surface_view::SurfaceWorker>,
     surface_buffer: xtion_vision::surface_view::SurfaceBuffer,
     submitted: Option<(Arc<DepthFrame>, usize, usize)>,
@@ -60,6 +66,12 @@ impl CloudView {
     pub fn new(mode: View, cpu: bool) -> Self {
         Self {
             mode,
+            auto_density: true,
+            load_stride: 0,
+            sample_since: None,
+            sample_draws: 0,
+            render_fps: 0.,
+            trails: false,
             surface_worker: None,
             surface_buffer: Default::default(),
             submitted: None,
@@ -108,6 +120,14 @@ impl CloudView {
         }
         ui.checkbox(&mut self.cpu, "CPU rasterizer");
         ui.checkbox(&mut self.camera.orthographic, "Orthographic");
+        ui.checkbox(&mut self.auto_density, "Adaptive display density");
+        if self.auto_density && self.load_stride > 0 {
+            ui.small(format!(
+                "Display stride raised by {} under load",
+                self.load_stride
+            ));
+        }
+        ui.checkbox(&mut self.trails, "3D trajectories");
         ui.checkbox(&mut self.grid, "Metric grid and axes");
         ui.checkbox(&mut self.frustum, "Sensor frustum");
         ui.collapsing("Sensor mount", |ui| {
@@ -165,6 +185,19 @@ impl CloudView {
     fn surface_active(&self) -> bool {
         self.mode == View::Surface || self.mode == View::Split && self.surface_in_split
     }
+    pub fn apply_floor(&mut self, plane: xtion_vision::planes::Plane) {
+        self.mount = Some((
+            (plane.offset * 100.).round() as i32,
+            plane.floor_tilt_deg().round() as i32,
+        ));
+    }
+    pub fn metrics(&self) -> serde_json::Value {
+        let seconds = self
+            .first_paint
+            .zip(self.last_paint)
+            .map_or(0., |(a, b)| b.duration_since(a).as_secs_f64());
+        serde_json::json!({"renderer":if self.cpu{"cpu"}else{"glow"},"draws":self.paints,"draw_interval_s":seconds,"draws_per_second":if seconds>0.{self.paints.saturating_sub(1) as f64/seconds}else{0.},"density_stride_extra":self.load_stride})
+    }
     pub fn pose(&self) -> xtion_vision::geometry::Transform {
         self.mount
             .and_then(|(h, t)| {
@@ -182,10 +215,25 @@ impl CloudView {
             ..Default::default()
         }
     }
-    pub fn show(&mut self, ui: &mut egui::Ui, input: &Arc<DepthFrame>, frozen: bool) {
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &xtion_vision::pipeline::Snapshot,
+        frozen: bool,
+    ) {
+        let input = &snapshot.frame;
+        let effective_stride = self.stride
+            + if self.auto_density {
+                self.load_stride
+            } else {
+                0
+            };
         let surface = self.surface_active();
         let output = if surface {
-            let settings = self.settings();
+            let settings = xtion_vision::reconstruction::MeshSettings {
+                stride: effective_stride,
+                ..self.settings()
+            };
             let worker = self.surface_worker.get_or_insert_with(Default::default);
             if self.submitted.as_ref().is_none_or(|(old, step, erode)| {
                 !Arc::ptr_eq(input, old) || *step != settings.stride || *erode != settings.erode
@@ -224,6 +272,21 @@ impl CloudView {
         self.first_paint.get_or_insert(now);
         self.last_paint = Some(now);
         self.paints += 1;
+        self.sample_draws += 1;
+        let start = *self.sample_since.get_or_insert(now);
+        let elapsed = now.duration_since(start).as_secs_f64();
+        if elapsed >= 2. {
+            self.render_fps = self.sample_draws as f64 / elapsed;
+            if self.auto_density && !frozen {
+                if self.render_fps < 15. {
+                    self.load_stride = (self.load_stride + 2).min(8);
+                } else if self.render_fps > 26. {
+                    self.load_stride = self.load_stride.saturating_sub(1);
+                }
+            }
+            self.sample_since = Some(now);
+            self.sample_draws = 0;
+        }
         let extent = ui
             .available_size()
             .clamp(Vec2::splat(1.), Vec2::splat(2048.));
@@ -247,7 +310,7 @@ impl CloudView {
         let settings = RenderSettings {
             camera: self.camera,
             rect,
-            stride: self.stride,
+            stride: effective_stride,
             radius: self.radius,
             clip: [self.near, self.far],
             colour: self.colour_by,
@@ -275,7 +338,7 @@ impl CloudView {
                     cloud,
                     self.camera,
                     size,
-                    NonZeroUsize::new(self.stride).unwrap(),
+                    NonZeroUsize::new(effective_stride).unwrap(),
                     [self.near, self.far],
                     self.colour_by,
                 );
@@ -393,6 +456,38 @@ impl CloudView {
                             egui::Stroke::new(1., Color32::from_rgb(f.rgb[0], f.rgb[1], f.rgb[2])),
                         );
                     }
+                }
+            }
+        }
+        if self.trails && Arc::ptr_eq(frame, input) {
+            let screen = |p: [f64; 3]| {
+                self.camera
+                    .project(
+                        Point3D {
+                            x: p[0],
+                            y: p[1],
+                            z: p[2],
+                        },
+                        size,
+                    )
+                    .map(|v| rect.min + Vec2::new(v[0] as f32, v[1] as f32))
+            };
+            for track in &snapshot.scene.objects {
+                for pair in track.trajectory.windows(2) {
+                    if let (Some(a), Some(b)) = (screen(pair[0].1), screen(pair[1].1)) {
+                        painter.line_segment([a, b], egui::Stroke::new(1.5, Color32::GOLD));
+                    }
+                }
+                if let Some(p) = track.region.centroid
+                    && let Some(at) = screen([p.x, p.y, p.z])
+                {
+                    painter.text(
+                        at,
+                        egui::Align2::LEFT_BOTTOM,
+                        format!("#{}", track.id),
+                        egui::FontId::proportional(13.),
+                        Color32::WHITE,
+                    );
                 }
             }
         }

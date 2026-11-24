@@ -26,6 +26,7 @@ const HELP: &str = "xtion-vision [--headless] [--replay PATH | --synthetic] [--f
     --view depth|points|surface|split   Desktop view (default depth)
     --point-renderer cpu|glow  Override automatic point rendering path
     --png VIEW.png      Save desktop window
+    --benchmark NEW.json    Write desktop acquisition and rendering metrics on exit
     --export NEW_DIR    Export the first metric snapshot and trajectories (headless)
     --ply NEW.ply       Export first metric cloud in headless mode
     --threshold-mm N    Minimum foreground depth difference (40..65535)
@@ -99,10 +100,11 @@ fn run() -> Result<()> {
     while idx < args.len() {
         match args[idx].as_str() {
             "--headless" | "--fast" | "--synthetic" => {}
-            "--view" | "--point-renderer" | "--capture-fps" | "--replay" | "--record" | "--png"
-            | "--export" | "--ply" | "--seconds" | "--threshold-mm" | "--ai-url" | "--ai-model"
-            | "--ai-refresh-ms" | "--ai-min-words" | "--ai-max-words" | "--ai-timeout-ms"
-            | "--ai-budget-ms" | "--ai-candidates" | "--ai-tokens" | "--ai-probe-tokens" => {
+            "--benchmark" | "--view" | "--point-renderer" | "--capture-fps" | "--replay"
+            | "--record" | "--png" | "--export" | "--ply" | "--seconds" | "--threshold-mm"
+            | "--ai-url" | "--ai-model" | "--ai-refresh-ms" | "--ai-min-words"
+            | "--ai-max-words" | "--ai-timeout-ms" | "--ai-budget-ms" | "--ai-candidates"
+            | "--ai-tokens" | "--ai-probe-tokens" => {
                 idx += 1;
                 if args
                     .get(idx)
@@ -199,6 +201,7 @@ fn run() -> Result<()> {
                 .into());
         }
         return viewer::launch(viewer::Options {
+            benchmark: val("--benchmark").map(str::to_owned),
             initial_view,
             cpu,
             input,
@@ -210,7 +213,7 @@ fn run() -> Result<()> {
             seconds,
         });
     }
-    if flag("--view") || flag("--point-renderer") {
+    if flag("--view") || flag("--point-renderer") || flag("--benchmark") {
         return Err("view options require the desktop viewer".into());
     }
     if flag("--png") {
