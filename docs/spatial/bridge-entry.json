@@ -1,0 +1,16 @@
+{
+  "frames": 114,
+  "frames_losing_any_visible_id": 37,
+  "frames_with_80pct_dominant_region": 76,
+  "frames_with_foreground": 114,
+  "input": "recordings/spatial-baseline/entry.xtv",
+  "largest_id_switches_in_adjacent_nonempty_frames": 0,
+  "largest_id_switches_per_minute": 0.0,
+  "moving_events": 13,
+  "perception_mean_ms": 1.8747259385964912,
+  "perception_p95_ms": 3.018479,
+  "regions_mean": 3.0350877192982457,
+  "regions_p95": 5,
+  "score_from_frame": 265,
+  "seconds": 3.770671789
+}

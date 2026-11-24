@@ -33,3 +33,5 @@ python3 scripts/spatial_review/extract.py recordings/spatial-baseline recordings
 python3 scripts/spatial_review/score.py recordings/spatial-baseline recordings/spatial-baseline/review development
 python3 scripts/spatial_review/score.py recordings/spatial-baseline recordings/spatial-baseline/review holdout
 ```
+
+The third reopened experiment (de7f8e4) reconnects an established region across a single missing native pixel when both ends and every intervening valid sample agree in depth. Its regression test preserves the missing pixel and the track ID. The entry score remained 76/114. The occupied score reached 2,387/2,681. Empty-scene motion events remained at two. The experimental workspace passed all 63 offline tests, formatting, Clippy and its release build. See bridge-*.json. The three-attempt stop rule closes this experiment. Raw camera-frame geometry can be validated independently; object-dependent measurements still require segmentation validation.
