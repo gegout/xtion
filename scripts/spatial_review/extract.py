@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,7 +19,7 @@ def run(command, cwd=ROOT, **kwargs):
 def extract(rev, recordings, output, labels):
     with tempfile.TemporaryDirectory() as tmp:
         tree = Path(tmp) / "source"
-        run(["git", "worktree", "add", "--detach", str(tree), rev])
+        run(["git", "worktree", "add", "--detach", str(tree), rev], stdout=sys.stderr)
         try:
             path = tree / "vision/src/perception.rs"
             code = path.read_text()
