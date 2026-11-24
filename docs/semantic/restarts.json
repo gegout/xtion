@@ -1,0 +1,98 @@
+[
+  {
+    "cycle": 1,
+    "observations": 254,
+    "answers": 254,
+    "tracking": 249,
+    "frames_with_activity_history": 247,
+    "relationship_instances": 2630,
+    "sessions": 1,
+    "summary": {
+      "fps": 29.96888993382735,
+      "health": {
+        "bytes": 108240492,
+        "decode_errors": 0,
+        "discarded_bytes": 1020,
+        "errors": 0,
+        "frames": 255,
+        "gaps": 2,
+        "incomplete": 1,
+        "missing_enable_ack": false,
+        "queue_drops": 0,
+        "startup_discards": 1,
+        "state": "Streaming",
+        "timeouts": 2
+      },
+      "processed": 254,
+      "recording_drops": 0,
+      "sampled_out": 0,
+      "stage_drops": 0,
+      "status": "stopped",
+      "type": "capture_summary"
+    }
+  },
+  {
+    "cycle": 2,
+    "observations": 254,
+    "answers": 254,
+    "tracking": 249,
+    "frames_with_activity_history": 246,
+    "relationship_instances": 1784,
+    "sessions": 1,
+    "summary": {
+      "fps": 29.96947921030518,
+      "health": {
+        "bytes": 108239764,
+        "decode_errors": 0,
+        "discarded_bytes": 1020,
+        "errors": 0,
+        "frames": 255,
+        "gaps": 0,
+        "incomplete": 1,
+        "missing_enable_ack": false,
+        "queue_drops": 0,
+        "startup_discards": 1,
+        "state": "Streaming",
+        "timeouts": 2
+      },
+      "processed": 254,
+      "recording_drops": 0,
+      "sampled_out": 0,
+      "stage_drops": 0,
+      "status": "stopped",
+      "type": "capture_summary"
+    }
+  },
+  {
+    "cycle": 3,
+    "observations": 254,
+    "answers": 254,
+    "tracking": 249,
+    "frames_with_activity_history": 248,
+    "relationship_instances": 4700,
+    "sessions": 1,
+    "summary": {
+      "fps": 29.968611461513078,
+      "health": {
+        "bytes": 108241540,
+        "decode_errors": 0,
+        "discarded_bytes": 1020,
+        "errors": 0,
+        "frames": 255,
+        "gaps": 2,
+        "incomplete": 1,
+        "missing_enable_ack": false,
+        "queue_drops": 0,
+        "startup_discards": 1,
+        "state": "Streaming",
+        "timeouts": 2
+      },
+      "processed": 254,
+      "recording_drops": 0,
+      "sampled_out": 0,
+      "stage_drops": 0,
+      "status": "stopped",
+      "type": "capture_summary"
+    }
+  }
+]

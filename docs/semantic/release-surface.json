@@ -1,0 +1,79 @@
+{
+  "benchmark": {
+    "elapsed_s": 45.035638907,
+    "health": {
+      "bytes": 565808856,
+      "decode_errors": 0,
+      "discarded_bytes": 1020,
+      "errors": 0,
+      "frames": 1334,
+      "gaps": 0,
+      "incomplete": 1,
+      "missing_enable_ack": false,
+      "queue_drops": 0,
+      "startup_discards": 1,
+      "state": "Streaming",
+      "timeouts": 2
+    },
+    "latest_latency_ms": 7.409492999999999,
+    "mean_perception_ms": 7.951305996999234,
+    "mean_semantic_ms": 0.10300713803450863,
+    "processed": 1333,
+    "processing_fps": 29.968231994110354,
+    "queue_drops": 0,
+    "view": {
+      "compositor_presentations": null,
+      "density_stride_extra": 0,
+      "distinct_frame_submissions": 1319,
+      "draw_interval_s": 44.420950191,
+      "draws": 1468,
+      "draws_per_second": 33.02495767632689,
+      "renderer": "glow"
+    }
+  },
+  "capture": {
+    "fps": 29.968231994110354,
+    "health": {
+      "bytes": 565808856,
+      "decode_errors": 0,
+      "discarded_bytes": 1020,
+      "errors": 0,
+      "frames": 1334,
+      "gaps": 0,
+      "incomplete": 1,
+      "missing_enable_ack": false,
+      "queue_drops": 0,
+      "startup_discards": 1,
+      "state": "Streaming",
+      "timeouts": 2
+    },
+    "processed": 1333,
+    "recording_drops": 0,
+    "sampled_out": 0,
+    "stage_drops": 0,
+    "status": "stopped",
+    "type": "capture_summary"
+  },
+  "firmware_after": {
+    "unix_ms": 1795544282827,
+    "vid": 7463,
+    "pid": 1537,
+    "bus": 1,
+    "address": 56,
+    "ports": [
+      2
+    ],
+    "interfaces": [
+      0,
+      1,
+      2
+    ],
+    "depth_alternate": 0,
+    "firmware": "5.8.22",
+    "state": "idle",
+    "error_category": null,
+    "endpoint_bytes": 0,
+    "last_frame": null,
+    "last_recovery": null
+  }
+}
