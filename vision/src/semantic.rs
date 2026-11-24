@@ -64,6 +64,7 @@ pub struct SemanticSceneGraph {
     pub entities: Vec<SemanticEntity>,
     pub relationships: Vec<SpatialRelationship>,
     pub expired: Vec<u64>,
+    pub activities: Vec<crate::activity::ActivityHypothesis>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GraphDelta {
@@ -101,6 +102,7 @@ pub struct SemanticEngine {
     pairs: BTreeMap<(u64, u64), u8>,
     previous: BTreeSet<(u64, u64, String)>,
     pub timeout_ns: u64,
+    pub activity: crate::activity::ActivityEngine,
 }
 impl Default for SemanticEngine {
     fn default() -> Self {
@@ -116,6 +118,7 @@ impl SemanticEngine {
             pairs: BTreeMap::new(),
             previous: BTreeSet::new(),
             timeout_ns: 750_000_000,
+            activity: Default::default(),
         }
     }
     pub fn observe(&mut self, s: &SceneState) -> SemanticSceneGraph {
@@ -137,10 +140,12 @@ impl SemanticEngine {
             entities: vec![],
             relationships: vec![],
             expired,
+            activities: vec![],
         };
         if s.status != "tracking" {
             self.pairs.clear();
             self.previous.clear();
+            graph.activities = self.activity.observe(&graph);
             return graph;
         }
         let tracks: Vec<_> = s.objects.iter().take(16).collect();
@@ -349,6 +354,7 @@ impl SemanticEngine {
             }
         }
         self.previous = current;
+        graph.activities = self.activity.observe(&graph);
         graph
     }
 }

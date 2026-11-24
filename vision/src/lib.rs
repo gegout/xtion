@@ -64,6 +64,7 @@ pub mod image;
 pub mod perception;
 pub mod pipeline;
 
+pub mod activity;
 pub mod measurement;
 mod metric_track;
 pub mod planes;

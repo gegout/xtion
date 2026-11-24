@@ -57,3 +57,30 @@ fn stationary_neighbors_stay_separate_and_relate_in_sensor_frame() {
     assert_eq!(gone.expired.len(), 2);
     assert_eq!(gone.delta(&g).removed.len(), 2);
 }
+#[test]
+fn sustained_lateral_motion_has_one_interval_and_gaps_close_it() {
+    let mut scene = fixture();
+    scene.objects.truncate(1);
+    let mut engine = SemanticEngine::default();
+    for _ in 0..16 {
+        scene.ns += 40_000_000;
+        engine.observe(&scene);
+    }
+    let g = engine.observe(&scene);
+    let active = g
+        .activities
+        .iter()
+        .filter(|a| a.end_ns.is_none())
+        .collect::<Vec<_>>();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].kind, "moving right");
+    scene.status = "capture gap";
+    scene.ns += 40_000_000;
+    let g = engine.observe(&scene);
+    assert!(g.activities.iter().all(|a| a.end_ns.is_some()));
+    assert!(
+        !g.activities
+            .iter()
+            .any(|a| a.kind == "left visible tracking")
+    );
+}
