@@ -64,4 +64,5 @@ pub mod image;
 pub mod perception;
 pub mod pipeline;
 
+pub mod point_view;
 pub mod trajectory;

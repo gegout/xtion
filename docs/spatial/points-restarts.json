@@ -1,0 +1,187 @@
+[
+  {
+    "cycle": 1,
+    "renderer": "glow",
+    "exit": 0,
+    "summary": [
+      {
+        "active_seconds": 3.434972664,
+        "draws": 152,
+        "draws_per_second": 43.95959291977643,
+        "renderer": "glow",
+        "type": "point_view_summary"
+      },
+      {
+        "fps": 29.970347812162675,
+        "health": {
+          "bytes": 44629312,
+          "decode_errors": 0,
+          "discarded_bytes": 1020,
+          "errors": 0,
+          "frames": 105,
+          "gaps": 0,
+          "incomplete": 1,
+          "missing_enable_ack": false,
+          "queue_drops": 0,
+          "startup_discards": 1,
+          "state": "Streaming",
+          "timeouts": 2
+        },
+        "processed": 104,
+        "recording_drops": 0,
+        "sampled_out": 0,
+        "stage_drops": 0,
+        "status": "stopped",
+        "type": "capture_summary"
+      }
+    ]
+  },
+  {
+    "cycle": 2,
+    "renderer": "cpu",
+    "exit": 0,
+    "summary": [
+      {
+        "active_seconds": 3.396955996,
+        "draws": 131,
+        "draws_per_second": 38.26955667164315,
+        "renderer": "cpu",
+        "type": "point_view_summary"
+      },
+      {
+        "fps": 29.379327120423373,
+        "health": {
+          "bytes": 44573068,
+          "decode_errors": 0,
+          "discarded_bytes": 1020,
+          "errors": 0,
+          "frames": 102,
+          "gaps": 5,
+          "incomplete": 4,
+          "missing_enable_ack": false,
+          "queue_drops": 0,
+          "startup_discards": 1,
+          "state": "Streaming",
+          "timeouts": 2
+        },
+        "processed": 101,
+        "recording_drops": 0,
+        "sampled_out": 0,
+        "stage_drops": 0,
+        "status": "stopped",
+        "type": "capture_summary"
+      }
+    ]
+  },
+  {
+    "cycle": 3,
+    "renderer": "glow",
+    "exit": 0,
+    "summary": [
+      {
+        "active_seconds": 3.435746003,
+        "draws": 114,
+        "draws_per_second": 32.889509265624255,
+        "renderer": "glow",
+        "type": "point_view_summary"
+      },
+      {
+        "fps": 29.678120523243734,
+        "health": {
+          "bytes": 44587124,
+          "decode_errors": 0,
+          "discarded_bytes": 1020,
+          "errors": 0,
+          "frames": 104,
+          "gaps": 1,
+          "incomplete": 2,
+          "missing_enable_ack": false,
+          "queue_drops": 0,
+          "startup_discards": 1,
+          "state": "Streaming",
+          "timeouts": 2
+        },
+        "processed": 103,
+        "recording_drops": 0,
+        "sampled_out": 0,
+        "stage_drops": 0,
+        "status": "stopped",
+        "type": "capture_summary"
+      }
+    ]
+  },
+  {
+    "cycle": 4,
+    "renderer": "cpu",
+    "exit": 0,
+    "summary": [
+      {
+        "active_seconds": 3.473692972,
+        "draws": 112,
+        "draws_per_second": 31.95446485763855,
+        "renderer": "cpu",
+        "type": "point_view_summary"
+      },
+      {
+        "fps": 29.38727611924895,
+        "health": {
+          "bytes": 44598344,
+          "decode_errors": 0,
+          "discarded_bytes": 1020,
+          "errors": 0,
+          "frames": 103,
+          "gaps": 4,
+          "incomplete": 3,
+          "missing_enable_ack": false,
+          "queue_drops": 0,
+          "startup_discards": 1,
+          "state": "Streaming",
+          "timeouts": 2
+        },
+        "processed": 102,
+        "recording_drops": 0,
+        "sampled_out": 0,
+        "stage_drops": 0,
+        "status": "stopped",
+        "type": "capture_summary"
+      }
+    ]
+  },
+  {
+    "cycle": 5,
+    "renderer": "glow",
+    "exit": 0,
+    "summary": [
+      {
+        "active_seconds": 3.434959303,
+        "draws": 124,
+        "draws_per_second": 35.80828450939001,
+        "renderer": "glow",
+        "type": "point_view_summary"
+      },
+      {
+        "fps": 29.095259947413194,
+        "health": {
+          "bytes": 44556996,
+          "decode_errors": 0,
+          "discarded_bytes": 4092,
+          "errors": 0,
+          "frames": 102,
+          "gaps": 6,
+          "incomplete": 4,
+          "missing_enable_ack": false,
+          "queue_drops": 0,
+          "startup_discards": 1,
+          "state": "Streaming",
+          "timeouts": 2
+        },
+        "processed": 101,
+        "recording_drops": 0,
+        "sampled_out": 0,
+        "stage_drops": 0,
+        "status": "stopped",
+        "type": "capture_summary"
+      }
+    ]
+  }
+]

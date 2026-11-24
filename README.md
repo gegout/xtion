@@ -238,3 +238,14 @@ The 0.2 sensor baseline and three segmentation experiments are documented in the
 ```sh
 cargo run --release -p xtion-vision --example spatial_baseline -- recording.xtv
 ```
+
+### Camera-frame point viewer
+
+```sh
+cargo build --release --locked -p xtion-vision
+target/release/xtion-vision --view split --capture-fps 30
+target/release/xtion-vision --view points --point-renderer cpu --replay session.xtv
+target/release/xtion-vision --synthetic --view points --png points.png --seconds 3
+```
+
+Select **Depth**, **3D points** or **Split** while capture is running. Drag to orbit, secondary-drag to pan and scroll to zoom. The grid spacing is half a metre. Depth holes remain visible, and only sensor-facing surfaces have geometry. See the [rendering decision and controls](docs/spatial/rendering.md) and [spatial validation report](docs/spatial/validation.md).

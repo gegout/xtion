@@ -6,7 +6,8 @@ license = "MIT"
 description = "Local, depth-only scene perception and optional grounded vision interpretation"
 
 [features]
-default = ["ai"]
+default = ["ai","desktop"]
+desktop = ["dep:eframe"]
 ai = ["dep:base64", "dep:reqwest", "dep:tokio"]
 
 [dependencies]
@@ -18,5 +19,10 @@ font8x8 = "0.3"
 base64 = { version = "0.22", optional = true }
 reqwest = {optional=true,version = "0.13",default-features=false,features=["json","rustls"]}
 tokio = {optional=true,version="1",features=["rt","time","sync","macros"]}
-eframe = {version="0.37",default-features=false,features=["glow","default_fonts","wayland","x11","clipboard"]}
+eframe = {optional=true,version="0.37",default-features=false,features=["glow","default_fonts","wayland","x11","clipboard"]}
 ctrlc = {version="3.5",features=["termination"]}
+
+[[bin]]
+name = "xtion-vision"
+path = "src/main.rs"
+required-features = ["desktop"]

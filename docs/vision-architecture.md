@@ -46,3 +46,5 @@ fn analyse(path: &str) -> Result<()> {
     source.stop()
 }
 ```
+
+An organised cloud provides zero-copy pixel-addressable geometry over immutable depth frames. The virtual camera projects those samples for CPU rasterization or the egui glow mesh. Sensor mount coordinates, optical coordinates and virtual camera coordinates remain separate. See the [point-view architecture and rendering decision](spatial/rendering.md).

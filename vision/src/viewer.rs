@@ -100,6 +100,8 @@ fn action_button(
     response
 }
 pub struct Options {
+    pub initial_view: crate::cloud_view::View,
+    pub cpu: bool,
     pub input: Input,
     pub capture_fps: u16,
     pub ai: Option<Config>,
@@ -127,6 +129,7 @@ pub fn launch(opts: Options) -> Result<()> {
     .map_err(|e| e.to_string().into())
 }
 struct Viewer {
+    cloud: crate::cloud_view::CloudView,
     capture_fps: u16,
     input: Input,
     pipe: Pipeline,
@@ -205,6 +208,7 @@ impl Viewer {
             .map(ToString::to_string)
             .unwrap_or_default();
         Self {
+            cloud: crate::cloud_view::CloudView::new(o.initial_view, o.cpu),
             capture_fps: o.capture_fps,
             pipe: Pipeline::with_capture_rate(
                 o.input.clone(),
@@ -399,6 +403,7 @@ impl eframe::App for Viewer {
                 egui::ScrollArea::vertical()
                     .id_salt("control_scroll")
                     .show(ui, |ui| {
+                        self.cloud.controls(ui);
                         ui.heading("Capture controls");
                         ui.horizontal(|ui| {
                             if action_button(ui, "Start sensor", ActionIcon::Play, true).clicked() {
@@ -582,7 +587,11 @@ impl eframe::App for Viewer {
             AUBERGINE,
         );
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("Depth view");
+            ui.heading(match self.cloud.mode {
+                crate::cloud_view::View::Depth => "Depth view",
+                crate::cloud_view::View::Points => "3D points",
+                crate::cloud_view::View::Split => "Depth and 3D points",
+            });
             ui.label(format!(
                 "{} · perception queue drops {} · recorder drops {}",
                 status,
@@ -593,7 +602,14 @@ impl eframe::App for Viewer {
                 ui.colored_label(Color32::LIGHT_RED, format!("Recording failed: {error}"));
             }
             if let Some(snapshot) = &snap {
-                self.depth_view(ui, snapshot);
+                match self.cloud.mode {
+                    crate::cloud_view::View::Depth => self.depth_view(ui, snapshot),
+                    crate::cloud_view::View::Points => self.cloud.show(ui, &snapshot.frame),
+                    crate::cloud_view::View::Split => ui.columns(2, |cols| {
+                        self.depth_view(&mut cols[0], snapshot);
+                        self.cloud.show(&mut cols[1], &snapshot.frame);
+                    }),
+                }
             }
         });
         if snap.is_some()
@@ -641,6 +657,8 @@ mod tests {
                 ai: None,
                 threshold: 100,
                 record: None,
+                initial_view: Default::default(),
+                cpu: true,
                 screenshot: None,
                 seconds: Some(0.1),
             },
@@ -754,6 +772,8 @@ mod tests {
                 ai: None,
                 threshold: 100,
                 record: None,
+                initial_view: Default::default(),
+                cpu: true,
                 screenshot: None,
                 seconds: Some(0.1),
             },

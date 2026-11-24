@@ -1,4 +1,5 @@
 mod chat_view;
+mod cloud_view;
 mod viewer;
 use std::{
     fs::File,
@@ -22,6 +23,8 @@ use xtion_vision::{
 const HELP: &str = "xtion-vision [--headless] [--replay PATH | --synthetic] [--fast] [--seconds N]
     --capture-fps N     Retain 5..30 live frames/s for processing and recording (default 10)
     --record NEW.xtv    Save raw depth, clocks and health
+    --view depth|points|split   Desktop view (default depth)
+    --point-renderer cpu|glow  Override automatic point rendering path
     --png VIEW.png      Save desktop window
     --ply NEW.ply       Export first metric cloud in headless mode
     --threshold-mm N    Minimum foreground depth difference (40..65535)
@@ -85,10 +88,10 @@ fn run() -> Result<()> {
     while idx < args.len() {
         match args[idx].as_str() {
             "--headless" | "--fast" | "--synthetic" => {}
-            "--capture-fps" | "--replay" | "--record" | "--png" | "--ply" | "--seconds"
-            | "--threshold-mm" | "--ai-url" | "--ai-model" | "--ai-refresh-ms"
-            | "--ai-min-words" | "--ai-max-words" | "--ai-timeout-ms" | "--ai-budget-ms"
-            | "--ai-candidates" | "--ai-tokens" | "--ai-probe-tokens" => {
+            "--view" | "--point-renderer" | "--capture-fps" | "--replay" | "--record" | "--png"
+            | "--ply" | "--seconds" | "--threshold-mm" | "--ai-url" | "--ai-model"
+            | "--ai-refresh-ms" | "--ai-min-words" | "--ai-max-words" | "--ai-timeout-ms"
+            | "--ai-budget-ms" | "--ai-candidates" | "--ai-tokens" | "--ai-probe-tokens" => {
                 idx += 1;
                 if args
                     .get(idx)
@@ -156,7 +159,26 @@ fn run() -> Result<()> {
         if flag("--fast") || flag("--ply") {
             return Err("--fast and --ply require --headless".into());
         }
-        if std::env::var("LIBGL_ALWAYS_SOFTWARE").as_deref() != Ok("1") {
+        let initial_view = match val("--view").unwrap_or("depth") {
+            "depth" => cloud_view::View::Depth,
+            "points" => cloud_view::View::Points,
+            "split" => cloud_view::View::Split,
+            _ => return Err("expected --view depth, points or split".into()),
+        };
+        let accelerated = initial_view != cloud_view::View::Depth
+            && std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/dri/renderD128")
+                .is_ok()
+            && std::env::var("LIBGL_ALWAYS_SOFTWARE").as_deref() != Ok("1");
+        let cpu = match val("--point-renderer").unwrap_or(if accelerated { "glow" } else { "cpu" })
+        {
+            "cpu" => true,
+            "glow" => false,
+            _ => return Err("expected --point-renderer cpu or glow".into()),
+        };
+        if cpu && std::env::var_os("LIBGL_ALWAYS_SOFTWARE").is_none() {
             use std::os::unix::process::CommandExt;
             return Err(std::process::Command::new(std::env::current_exe()?)
                 .args(&args)
@@ -165,6 +187,8 @@ fn run() -> Result<()> {
                 .into());
         }
         return viewer::launch(viewer::Options {
+            initial_view,
+            cpu,
             input,
             capture_fps,
             ai: config,
@@ -173,6 +197,9 @@ fn run() -> Result<()> {
             screenshot: val("--png").map(str::to_owned),
             seconds,
         });
+    }
+    if flag("--view") || flag("--point-renderer") {
+        return Err("view options require the desktop viewer".into());
     }
     if flag("--png") {
         return Err("--png requires the desktop viewer".into());

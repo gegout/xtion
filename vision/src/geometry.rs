@@ -10,7 +10,11 @@ pub struct Point3D {
 }
 impl CameraIntrinsics {
     pub fn project(&self, u: f64, v: f64, z: f64) -> Option<Point3D> {
-        if self.source == IntrinsicsSource::Unknown || !(self.fx > 0. && self.fy > 0. && z > 0.) {
+        if self.source == IntrinsicsSource::Unknown
+            || !self.fx.is_finite()
+            || !self.fy.is_finite()
+            || !(self.fx > 0. && self.fy > 0. && z > 0.)
+        {
             return None;
         }
         let p = Point3D {
@@ -169,6 +173,14 @@ mod tests {
         assert!(k.project(1., 1., 0.).is_none());
         assert!(
             CameraIntrinsics {
+                fx: f64::INFINITY,
+                ..k
+            }
+            .project(1., 1., 2.)
+            .is_none()
+        );
+        assert!(
+            CameraIntrinsics {
                 source: IntrinsicsSource::Unknown,
                 ..k
             }
@@ -208,6 +220,17 @@ mod tests {
 #[cfg(test)]
 mod spatial_tests {
     use super::*;
+    #[test]
+    fn manual_mount_maps_camera_origin_and_tilt_into_floor_coordinates() {
+        let pose = Pose::manual_mount(1.2, std::f64::consts::FRAC_PI_6).unwrap();
+        let axis = pose.transform.apply(Point3D {
+            x: 0.,
+            y: 0.,
+            z: 2.,
+        });
+        assert!((axis.y + 0.2).abs() < 1e-12);
+        assert!(Pose::manual_mount(f64::NAN, 0.).is_none());
+    }
     #[test]
     fn rigid_transform_round_trip() {
         let t = Transform {
@@ -257,5 +280,24 @@ mod spatial_tests {
         let b = cloud.point(w - 2, h - 2).unwrap();
         assert!((b.x - a.x - 3. * (w - 3) as f64 / i.intrinsics.fx).abs() < 1e-10);
         assert!((b.y - a.y - 3. * (h - 3) as f64 / i.intrinsics.fy).abs() < 1e-10);
+    }
+}
+
+impl Pose {
+    /// Floor-relative parent with Y downward. Positive tilt looks below the horizon.
+    /// These two values are supplied by the operator in metres and radians.
+    pub fn manual_mount(height: f64, tilt: f64) -> Option<Self> {
+        if !(height.is_finite() && height >= 0. && tilt.is_finite()) {
+            return None;
+        }
+        let (sin, cos) = tilt.sin_cos();
+        Some(Self {
+            parent: "floor",
+            child: "camera",
+            transform: Transform {
+                rotation: [[1., 0., 0.], [0., cos, sin], [0., -sin, cos]],
+                translation: [0., -height, 0.],
+            },
+        })
     }
 }
