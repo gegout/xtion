@@ -41,10 +41,10 @@ impl Writer {
             let mut last_exchange = 0;
             let mut last_report = String::new();
             while let Some((g, r, exchanges)) = work.pop() {
-                let record = if count % 60 == 0 || previous.is_none() {
-                    json!({"snapshot":g.as_ref()})
+                let record = if let Some(base) = previous.as_ref().filter(|_| count % 60 != 0) {
+                    json!({"delta":g.delta(base),"ns":g.ns,"status":g.status,"optics":g.optics,"activities":g.activities,"expired":g.expired})
                 } else {
-                    json!({"delta":g.delta(previous.as_ref().unwrap()),"ns":g.ns,"status":g.status,"optics":g.optics,"activities":g.activities,"expired":g.expired})
+                    json!({"snapshot":g.as_ref()})
                 };
                 let reply = r.filter(|r| r.success && r.scene_id != last_report);
                 if let Some(r) = &reply {

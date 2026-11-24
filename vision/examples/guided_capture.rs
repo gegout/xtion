@@ -164,7 +164,7 @@ fn review(path: &Path) -> Result<()> {
     let mut stamps = vec![];
     while let Some(f) = src.next_frame()? {
         stamps.push(f.info.arrival_ns);
-        if index % 5 == 0 {
+        if index.is_multiple_of(5) {
             let (w, h, rgb) = image::rgb(&f, 320, 4000);
             let png = dir.join(format!("{index:05}.png"));
             fs::write(&png, image::png(w, h, &rgb)?)?;

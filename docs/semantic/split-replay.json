@@ -1,0 +1,28 @@
+{
+  "elapsed_s": 6.026528415,
+  "health": {
+    "bytes": 113328256,
+    "decode_errors": 0,
+    "discarded_bytes": 1020,
+    "errors": 0,
+    "frames": 267,
+    "gaps": 0,
+    "incomplete": 1,
+    "missing_enable_ack": false,
+    "queue_drops": 0,
+    "startup_discards": 1,
+    "state": "Streaming",
+    "timeouts": 2
+  },
+  "latest_latency_ms": 5.918155,
+  "processed": 181,
+  "processing_fps": 29.96737413519771,
+  "queue_drops": 0,
+  "view": {
+    "density_stride_extra": 0,
+    "draw_interval_s": 5.9452133929999995,
+    "draws": 194,
+    "draws_per_second": 32.463090429561646,
+    "renderer": "glow"
+  }
+}
