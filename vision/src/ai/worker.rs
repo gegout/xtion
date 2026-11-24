@@ -706,7 +706,8 @@ impl Api {
             _ => return Err("missing semantic evidence".into()),
         };
         let prompt = format!(
-            "Describe this depth-camera observation. Infer whether the subject could be a person from an upright human-sized silhouette. Use possible person when the supplied upright dimensions fit a human silhouette. This is a shape hypothesis; a tall object may look similar. Choose unknown shape when size evidence is absent. Camera x increases from 0 at left to 1 at right. Infer motion from ordered positions of the same track. Left-to-right or right-to-left means traversing both outer thirds; otherwise use rightward or leftward. Without a trajectory use is present. Do not infer identity, intention or colour. The measured action is {action}. Use this action exactly. Return JSON fields subject and action. Evidence: {observation}"
+            "Describe this depth-camera observation. Infer whether the subject could be a person from an upright human-sized silhouette. Use possible person when the supplied upright dimensions fit a human silhouette. This is a shape hypothesis; a tall object may look similar. Choose unknown shape when size evidence is absent. Camera x increases from 0 at left to 1 at right. Infer motion from ordered positions of the same track. Left-to-right or right-to-left means traversing both outer thirds; otherwise use rightward or leftward. Without a trajectory use is present. Do not infer identity, intention or colour. The measured action is {action}. Use this action exactly. Return JSON fields subject and action. Evidence: {observation}. Measured spatial context: {}",
+            super::spatial::observations(s)
         );
         let subjects = if body {
             vec!["possible person", "unknown shape"]
@@ -932,8 +933,9 @@ impl Api {
             .collect::<Vec<_>>()
             .join("\n");
         let prompt = format!(
-            "You narrate a fixed ASUS Xtion depth camera for someone who cannot see the display. You receive measurements only. Left and right are from the camera; Z is forward distance in metres. A region is a tracked patch of depth, with unknown identity. Zero means missing. Never infer a person, colour or activity from appearance. If tracking is impaired, report coverage and withhold motion claims. Otherwise prioritize a moving region and its direction; next prefer a stationary foreground region; for an empty foreground describe the left/centre/right depth layout. Choose the one candidate that best explains meaningful change over time. Prefer a motion transition to a steady region. Return only JSON with its integer index.\n{}\nCandidates:\n{numbered}",
-            self.history.prompt(s)
+            "You narrate a fixed ASUS Xtion depth camera for someone who cannot see the display. You receive measurements only. Left and right are from the camera; Z is forward distance in metres. A region is a tracked patch of depth, with unknown identity. Zero means missing. Never infer a person, colour or activity from appearance. If tracking is impaired, report coverage and withhold motion claims. Otherwise prioritize a moving region and its direction; next prefer a stationary foreground region; for an empty foreground describe the left/centre/right depth layout. Choose the one candidate that best explains meaningful change over time. Prefer a motion transition to a steady region. Return only JSON with its integer index.\n{}\nSpatial evidence: {}\nCandidates:\n{numbered}",
+            self.history.prompt(s),
+            super::spatial::observations(s)
         );
         let mut attempts = 0;
         loop {
@@ -1008,7 +1010,7 @@ impl Api {
         let text = format!(
             "Depth only. Colours encode distance, not appearance. Red near, blue 4 m or farther, black invalid. Do not infer identity, colour, texture or text. Use recent lateral movement events for the direction of travel of the same track. A human-sized upright silhouette can support a tentative person-like label. Supply shape hypotheses only. Use current observation IDs, local Z and direction. Use an empty claims array when uncertain. Return JSON matching {schema}. Context: {}. Current scene: {}",
             self.history.prompt(s),
-            serde_json::to_string(s)?
+            super::spatial::observations(s)
         );
         let mut parts = vec![json!({"type":"text","text":text})];
         if s.objects.iter().any(|o| o.moving)

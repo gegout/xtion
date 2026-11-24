@@ -90,6 +90,8 @@ pub struct Report {
 #[cfg(feature = "ai")]
 mod history;
 #[cfg(feature = "ai")]
+mod spatial;
+#[cfg(feature = "ai")]
 mod worker;
 #[cfg(feature = "ai")]
 pub use worker::Interpreter;
