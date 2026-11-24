@@ -1,0 +1,3 @@
+1d328cc00ab16be8f174dec4bc640531f17923cf67a3f771afada93899c2d868  recordings/spatial-baseline/entry.xtv
+1421957c44e556fcfde3b70b8d9c02662a5d9cee39a8c30ec1e57e9a3c72c59b  recordings/spatial-baseline/static-interior.xtv
+ed7c06a0c6bdd307f17179092acb85e3e88f2344c2018e9e5e9ed6097e8a03ba  recordings/spatial-baseline/crossing.xtv

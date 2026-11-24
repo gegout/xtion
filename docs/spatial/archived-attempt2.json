@@ -1,0 +1,16 @@
+{
+  "frames": 134,
+  "frames_losing_any_visible_id": 0,
+  "frames_with_80pct_dominant_region": 0,
+  "frames_with_foreground": 0,
+  "input": "/tmp/xtv-verification/final-session.xtv",
+  "largest_id_switches_in_adjacent_nonempty_frames": 0,
+  "largest_id_switches_per_minute": 0.0,
+  "moving_events": 0,
+  "perception_mean_ms": 0.7116057835820893,
+  "perception_p95_ms": 0.9897490000000001,
+  "regions_mean": 0.0,
+  "regions_p95": 0,
+  "score_from_frame": 0,
+  "seconds": 4.438032881
+}

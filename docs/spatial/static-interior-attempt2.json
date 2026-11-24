@@ -1,0 +1,16 @@
+{
+  "frames": 224,
+  "frames_losing_any_visible_id": 0,
+  "frames_with_80pct_dominant_region": 14,
+  "frames_with_foreground": 14,
+  "input": "recordings/spatial-baseline/static-interior.xtv",
+  "largest_id_switches_in_adjacent_nonempty_frames": 0,
+  "largest_id_switches_per_minute": 0.0,
+  "moving_events": 1,
+  "perception_mean_ms": 0.43897012946428565,
+  "perception_p95_ms": 0.650004,
+  "regions_mean": 0.06696428571428571,
+  "regions_p95": 1,
+  "score_from_frame": 0,
+  "seconds": 7.441249994
+}

@@ -230,3 +230,11 @@ The default single 1 MiB read and eight-slot queue performed best among the sync
 Xtion Vision is MIT licensed under [LICENSE](LICENSE). The existing native driver and its original contributions retain the [Apache License 2.0](LICENSE-APACHE) and [NOTICE](NOTICE). Historical host-level experiments are recorded in [recovery findings](docs/recovery.md). Application recovery uses only the target USB device.
 
 Ordinary workspace tests run without sensor access. With the sensor exclusively available, run the Vision checks with `cargo test --release -p xtion-vision --test live -- --ignored --test-threads=1`. The native driver's historical capture regression reads private fixture files on the validation host. Run that extra check there with `cargo test -p xtion captured_hardware_frame_decodes_to_public_metric_frame -- --ignored`. Git includes the two synthetic Vision recordings. Personal depth captures stay local.
+
+### Spatial Vision development
+
+The 0.2 sensor baseline and three segmentation experiments are documented in the [spatial validation report](docs/spatial/validation.md). The desktop application on main uses the 0.1 pipeline. To reproduce the comparisons, run the release replay example on a local XTV recording:
+
+```sh
+cargo run --release -p xtion-vision --example spatial_baseline -- recording.xtv
+```

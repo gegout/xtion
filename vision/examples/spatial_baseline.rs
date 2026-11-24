@@ -45,6 +45,17 @@ fn main() -> Result<()> {
         previous = ids;
         let max = scene.objects.iter().max_by_key(|o| o.region.samples);
         if let Some(m) = max {
+            if std::env::var_os("XTION_TRACE_REGIONS").is_some() {
+                eprintln!(
+                    "{} {} {:?} {:.3} {} {:?}",
+                    index - 1,
+                    m.id,
+                    m.region.bounds,
+                    m.region.z,
+                    m.region.samples,
+                    m.region.center
+                );
+            }
             dominant += usize::from(
                 5 * m.region.samples
                     >= 4 * scene
