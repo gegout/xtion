@@ -56,3 +56,5 @@ The production branch now includes camera-frame geometry and interactive point v
 | Floor estimation, 3D object tracking and dependent release work | Blocked | Phase 1 entry dominance was 76/114 on the third reopened attempt versus 94/114 in production. Visible-surface meshes, measurement tools, extended exports and AI observations have not shipped. |
 
 The locked offline workspace suite passed 64 tests (nine opt-in tests skipped), together with formatting, warning-denied Clippy and a release build. No firmware, USB driver or kernel settings were changed. The live screenshot and raw recordings stay local.
+
+The [repositioned-sensor retest](repositioned-retest.md) compares both segmentation implementations on a new occupied scene and a confirmed empty scene. It also records a desktop shutdown defect, the correction and live signal/reopen tests.
