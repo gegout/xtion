@@ -44,6 +44,7 @@ fn main() {
     }
 }
 struct Output {
+    question: Option<String>,
     ai: Option<Interpreter>,
     refresh: Duration,
     last_event: Option<String>,
@@ -79,6 +80,13 @@ impl Output {
             a.latest(&s)
         });
         let mut w = self.stdout.lock();
+        if let Some(q) = &self.question {
+            writeln!(
+                w,
+                "{}",
+                serde_json::json!({"type":"answer","question":q,"answer":xtion_vision::dialogue::answer(graph,q,&[])})
+            )?;
+        }
         let offset = self
             .last_event
             .as_ref()
@@ -110,7 +118,8 @@ fn run() -> Result<()> {
     while idx < args.len() {
         match args[idx].as_str() {
             "--allow-remote-frames" | "--headless" | "--fast" | "--synthetic" => {}
-            "--ai-rpm"
+            "--question"
+            | "--ai-rpm"
             | "--ai-session-tokens"
             | "--noise-config"
             | "--benchmark"
@@ -262,6 +271,7 @@ fn run() -> Result<()> {
         stop.load(Ordering::Acquire) || seconds.is_some_and(|s| start.elapsed().as_secs_f64() >= s)
     };
     let mut out = Output {
+        question: val("--question").map(str::to_owned),
         refresh: config.as_ref().map(|c| c.refresh).unwrap_or_default(),
         ai: config.map(Interpreter::start).transpose()?,
         export: val("--export").map(str::to_owned),

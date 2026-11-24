@@ -84,3 +84,20 @@ fn sustained_lateral_motion_has_one_interval_and_gaps_close_it() {
             .any(|a| a.kind == "left visible tracking")
     );
 }
+#[test]
+fn local_questions_use_only_visible_measurements() {
+    let g = SemanticEngine::default().observe(&fixture());
+    let ask = |q| xtion_vision::dialogue::answer(&g, q, &[]);
+    assert_eq!(
+        ask("how many entities?").text,
+        "2 visible tracked entities."
+    );
+    assert_eq!(ask("how many people?").source, "unknown");
+    assert!(
+        ask("nearest entity?")
+            .text
+            .contains(&format!("{:.2} m", g.entities[0].median_z_m))
+    );
+    assert_eq!(ask("distance to E999").source, "unknown");
+    assert_eq!(ask("recent events").source, "historical");
+}
