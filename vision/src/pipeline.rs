@@ -25,6 +25,7 @@ pub enum Input {
 #[derive(Clone)]
 pub struct Snapshot {
     pub scene: Arc<SceneState>,
+    pub graph: Arc<crate::semantic::SemanticSceneGraph>,
     pub frame: Arc<DepthFrame>,
     pub received: Instant,
     pub processed: u64,
@@ -247,6 +248,7 @@ impl Pipeline {
         p.threads.push(thread::spawn(move || {
             let mut engine = Engine::default();
             let mut first = None;
+            let mut semantics = crate::semantic::SemanticEngine::default();
             let mut processed = 0;
             let mut recent = VecDeque::new();
             while let Some((received, frame)) = frames.pop() {
@@ -256,6 +258,7 @@ impl Pipeline {
                 engine.threshold_mm = threshold.load(Relaxed);
                 let began = Instant::now();
                 let scene = Arc::new(engine.observe(&frame));
+                let graph = Arc::new(semantics.observe(&scene));
                 let processing_ms = began.elapsed().as_secs_f64() * 1000.;
                 processed += 1;
                 let delta = frame
@@ -288,6 +291,7 @@ impl Pipeline {
                     0.
                 };
                 *latest.lock().unwrap() = Some(Snapshot {
+                    graph,
                     scene,
                     frame,
                     received,

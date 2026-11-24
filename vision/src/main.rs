@@ -52,7 +52,12 @@ struct Output {
     stdout: io::Stdout,
 }
 impl Output {
-    fn emit(&mut self, s: Arc<SceneState>, f: Arc<DepthFrame>) -> Result<()> {
+    fn emit(
+        &mut self,
+        s: Arc<SceneState>,
+        f: Arc<DepthFrame>,
+        graph: &xtion_vision::semantic::SemanticSceneGraph,
+    ) -> Result<()> {
         if let Some(dir) = self.export.take() {
             xtion_vision::spatial_export::export(
                 std::path::Path::new(&dir),
@@ -86,7 +91,7 @@ impl Output {
         writeln!(
             w,
             "{}",
-            serde_json::json!({"type":"observation","description":describe(&s),"scene":*s,"ai":report})
+            serde_json::json!({"type":"observation","description":describe(&s),"scene":*s,"semantic":graph,"ai":report})
         )?;
         Ok(())
     }
@@ -257,7 +262,7 @@ fn run() -> Result<()> {
             if let Some(s) = snap {
                 if s.processed != seen {
                     seen = s.processed;
-                    out.emit(s.scene, s.frame)?;
+                    out.emit(s.scene, s.frame, &s.graph)?;
                     stale = false
                 } else if !stale && s.received.elapsed() > Duration::from_millis(500) {
                     writeln!(
@@ -297,6 +302,7 @@ fn run() -> Result<()> {
         let mut writer = record
             .map(|p| Recorder::new(BufWriter::new(File::create_new(p)?)))
             .transpose()?;
+        let mut semantics = xtion_vision::semantic::SemanticEngine::default();
         let mut engine = Engine::default();
         engine.threshold_mm = threshold;
         while !done() {
@@ -304,7 +310,9 @@ fn run() -> Result<()> {
             if let Some(w) = &mut writer {
                 w.frame(&f)?
             }
-            out.emit(Arc::new(engine.observe(&f)), Arc::new(f))?
+            let scene = engine.observe(&f);
+            let graph = semantics.observe(&scene);
+            out.emit(Arc::new(scene), Arc::new(f), &graph)?
         }
         src.stop()?;
         if let Some(w) = writer {
