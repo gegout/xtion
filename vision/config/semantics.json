@@ -1,0 +1,8 @@
+{
+  "occlusion_ms": 750,
+  "activity_debounce_ms": 400,
+  "history_windows_s": [2, 10, 60],
+  "label_lifetime_s": 30,
+  "spatial_budget_bytes": 8192,
+  "labels": ["unknown", "person-like shape", "hand-like shape", "chair-like", "table-like", "box-like"]
+}

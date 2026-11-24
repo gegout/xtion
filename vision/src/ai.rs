@@ -74,7 +74,8 @@ pub struct Claim {
     pub z_m: f64,
     pub confidence: f64,
 }
-#[derive(Clone, Debug, Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct Report {
     pub model: String,
     pub scene_id: String,
@@ -85,6 +86,7 @@ pub struct Report {
     pub label_votes: Vec<crate::semantic::LabelVote>,
     pub interpretation: Option<serde_json::Value>,
     pub question: Option<String>,
+    pub accounting: serde_json::Value,
     pub rejections: std::collections::BTreeMap<String, u64>,
     pub supporting_ids: Vec<String>,
     pub usage: Value,

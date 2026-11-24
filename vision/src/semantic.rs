@@ -38,6 +38,8 @@ pub struct SemanticEntity {
     pub velocity_m_s: Option<[f64; 3]>,
     pub image_bounds: [usize; 4],
     pub quality: f64,
+    pub axial_sigma_m: f64,
+    pub lateral_approximate: bool,
     pub clipped: bool,
     pub moving: bool,
     pub labels: Vec<SemanticHypothesis>,
@@ -68,6 +70,7 @@ pub struct SemanticSceneGraph {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GraphDelta {
+    pub order: Vec<u64>,
     pub base: String,
     pub snapshot: String,
     pub upsert: Vec<SemanticEntity>,
@@ -77,6 +80,7 @@ pub struct GraphDelta {
 impl SemanticSceneGraph {
     pub fn delta(&self, previous: &Self) -> GraphDelta {
         GraphDelta {
+            order: self.entities.iter().map(|e| e.id).collect(),
             base: previous.snapshot.clone(),
             snapshot: self.snapshot.clone(),
             upsert: self
@@ -98,6 +102,7 @@ impl SemanticSceneGraph {
 pub struct SemanticEngine {
     session: String,
     next: u64,
+    noise: crate::perception::NoiseModel,
     active: BTreeMap<u64, SemanticEntity>,
     pairs: BTreeMap<(u64, u64), u8>,
     previous: BTreeSet<(u64, u64, String)>,
@@ -125,10 +130,11 @@ impl SemanticEngine {
         Self {
             session: session.into(),
             next: 0,
+            noise: Default::default(),
             active: BTreeMap::new(),
             pairs: BTreeMap::new(),
             previous: BTreeSet::new(),
-            timeout_ns: 750_000_000,
+            timeout_ns: crate::semantic_config::Settings::get().occlusion_ms * 1_000_000,
             activity: Default::default(),
         }
     }
@@ -275,6 +281,8 @@ impl SemanticEngine {
                 bounds_m: b,
                 image_bounds: image,
                 median_z_m: main.region.median_z_m,
+                axial_sigma_m: self.noise.sigma_mm(main.region.median_z_m * 1000.) / 1000.,
+                lateral_approximate: s.optics != crate::IntrinsicsSource::Calibrated,
                 quality: group.iter().map(|t| t.region.quality).fold(1., f64::min),
                 clipped: group.iter().any(|t| t.region.clipped),
                 velocity_m_s: main.filtered_velocity,
@@ -435,10 +443,10 @@ pub struct HypothesisStore {
 }
 impl HypothesisStore {
     pub fn apply(&mut self, g: &mut SemanticSceneGraph, incoming: &[LabelVote]) {
+        let lifetime_ns = crate::semantic_config::Settings::get().label_lifetime_s * 1_000_000_000;
         self.votes.retain(|id, v| {
             v.retain(|p| {
-                g.ns.checked_sub(p.ns)
-                    .is_some_and(|age| age <= 30_000_000_000)
+                g.ns.checked_sub(p.ns).is_some_and(|age| age <= lifetime_ns)
                     && g.entities
                         .iter()
                         .any(|e| e.id == *id && e.members == p.members && e.quality > 0.1)
@@ -461,7 +469,7 @@ impl HypothesisStore {
                     .entities
                     .iter()
                     .any(|e| e.id == p.entity && e.members == p.members && e.quality > 0.1)
-                || !g.ns.checked_sub(p.ns).is_some_and(|d| d <= 30_000_000_000)
+                || !g.ns.checked_sub(p.ns).is_some_and(|d| d <= lifetime_ns)
             {
                 continue;
             }
@@ -488,7 +496,7 @@ impl HypothesisStore {
                     label: v[2].label.clone(),
                     evidence: v.iter().map(|p| p.evidence.clone()).collect(),
                     provenance: Provenance::AiHypothesis,
-                    expires_ns: v[0].ns.saturating_add(30_000_000_000),
+                    expires_ns: v[0].ns.saturating_add(lifetime_ns),
                 });
             }
         }

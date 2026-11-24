@@ -8,6 +8,23 @@ is installed or required.
 
 The workspace builds two applications. **xtion** probes, captures, diagnoses and stress-tests the USB sensor. **xtion-vision** watches visible depth surfaces, measures how they move, and describes the scene locally. Its desktop and JSON-lines interfaces consume the same perception engine. A configured vision endpoint can add shape hypotheses with evidence IDs.
 
+## Intelligent Spatial Perception 0.3
+
+Xtion Vision groups measured track fragments into session-scoped entities. It describes their visible positions, motion and relationships in camera coordinates. The local engine works offline. Open **Semantic scene graph** to select entities and inspect their evidence. The AI panel also answers local questions such as “How many entities?”, “Distance between E1 and E2?” and “What happened in the last 10 seconds?”. Marks and bounds can be displayed in depth, point, surface and split views.
+
+```sh
+cargo build --workspace --release --locked
+target/release/xtion-vision --view split --capture-fps 30
+target/release/xtion-vision --headless --synthetic --fast --question 'What happened in the last 2 seconds?'
+target/release/xtion-vision --record session.xtv --seconds 20
+target/release/xtion-vision --replay session.xtv --recorded --view surface
+target/release/xtion-vision --play-semantics session.semantic.jsonl
+```
+
+Recording creates a local semantic JSONL sidecar next to the XTV depth file. Recorded playback works offline. Ordinary replay recomputes the local graph. Pass an endpoint explicitly for fresh AI interpretations. Remote endpoints require `--allow-remote-frames` or the consent checkbox in **Model connection**. The structured spatial packet defaults to 8 KiB. Use `--semantic-config FILE` to adjust bounded history windows, label vocabulary and evidence expiry. Use `--ai-rpm` and `--ai-session-tokens` to limit requests and token use.
+
+Human posture, landmarks and person-specific activities have no qualifying reviewed holdout. “Stationary surface” describes an observed region and leaves the person’s posture unknown. The native driver remains at 0.1.0. [Capture and review](docs/semantic/dataset.md) · [Architecture](docs/semantic/architecture.md) · [Release notes and validation](docs/semantic/release.md)
+
 ## Spatial Vision 0.2
 
 Xtion Vision turns a fixed depth camera into an interactive view of the visible surfaces in front of it. It estimates where foreground regions move in camera coordinates. Raw depths, region identity, and inferred scene labels remain accessible independently. The desktop, recorder, geometry tools and local descriptions work offline.
@@ -55,14 +72,14 @@ Headless mode writes an observation per delivered frame and separate event recor
 
 ```bash
 target/release/xtion-vision --ai-url http://localhost:8000/v1
-target/release/xtion-vision --ai-url https://api.openai.com/v1 --ai-model MODEL_NAME
+target/release/xtion-vision --allow-remote-frames --ai-url https://api.openai.com/v1 --ai-model MODEL_NAME
 ```
 
 For a build that omits the AI HTTP client entirely, use `cargo build -p xtion-vision --release --no-default-features`.
 
 AI is off by default. Enabling it sends reduced depth images, observations, recent events and motion context to the chosen endpoint. Local endpoints can operate without credentials. Enter the key in the masked **Model connection → API key** field and select **Refresh connection** (or **Enable AI analysis**). The desktop keeps the key in memory for that endpoint. For headless use, set `OPENAI_API_KEY` before launch. The UI and JSON report hypotheses, their observation IDs and confidence. The local summary continues during discovery, outages or rejected replies.
 
-Discovery tests up to four candidate models under a 30-second overall deadline. Each request times out after twenty seconds by default. Four synthetic quadrant checks establish image use before model selection. Explicit model mode skips discovery. Chat Completions is the default. A missing Chat route falls back to Responses only when the endpoint advertises a matching POST operation in its OpenAPI document. `--ai-candidates`, `--ai-budget-ms`, `--ai-timeout-ms`, `--ai-probe-tokens`, `--ai-tokens` and `--ai-refresh-ms` set limits. The default minimum AI interval is seven seconds and the default interpretation cap is 400 output tokens. Run `xtion-vision --help` for the full CLI.
+Discovery tests up to four candidate models under a 30-second overall deadline. Each request times out after twenty seconds by default. Four synthetic quadrant checks and a two-mark test of count, nearest surface and left-to-right order qualify discovery candidates. Explicit model mode skips discovery. Chat Completions is the default. A missing Chat route falls back to Responses only when the endpoint advertises a matching POST operation in its OpenAPI document. `--ai-candidates`, `--ai-budget-ms`, `--ai-timeout-ms`, `--ai-probe-tokens`, `--ai-tokens` and `--ai-refresh-ms` set limits. The default minimum AI interval is seven seconds and the default interpretation cap is 400 output tokens. Run `xtion-vision --help` for the full CLI.
 
 For the local SmolLM3-3B service, select the model explicitly and allow five seconds between analyses:
 

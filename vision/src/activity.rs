@@ -35,8 +35,8 @@ impl Default for ActivityEngine {
             states: BTreeMap::new(),
             history: VecDeque::new(),
             serial: 0,
-            debounce_ns: 400_000_000,
-            windows_s: [2, 10, 60],
+            debounce_ns: crate::semantic_config::Settings::get().activity_debounce_ms * 1_000_000,
+            windows_s: crate::semantic_config::Settings::get().history_windows_s,
         }
     }
 }

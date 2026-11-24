@@ -22,7 +22,13 @@ use xtion_vision::{
 };
 const HELP: &str = "xtion-vision [--headless] [--replay PATH | --synthetic] [--fast] [--seconds N]
     --capture-fps N     Retain 5..30 live frames/s for processing and recording (default 10)
-    --record NEW.xtv    Save raw depth, clocks and health
+    --record NEW.xtv    Save raw depth and the local semantic JSONL sidecar
+    --recorded --replay FILE  View stored semantics with matching XTV frames offline
+    --play-semantics FILE   Reproduce recorded interpretations without an endpoint
+    --question TEXT     Query each headless graph using measured evidence
+    --semantic-config FILE  Configure vocabulary, time windows and observation budget
+    --allow-remote-frames   Consent to send depth observations to the configured remote URL
+    --ai-rpm N --ai-session-tokens N    Bound endpoint calls and session token use
     --view depth|points|surface|split   Desktop view (default depth)
     --point-renderer cpu|glow  Override automatic point rendering path
     --png VIEW.png      Save desktop window
@@ -140,10 +146,11 @@ fn run() -> Result<()> {
     let mut idx = 0;
     while idx < args.len() {
         match args[idx].as_str() {
-            "--allow-remote-frames" | "--headless" | "--fast" | "--synthetic" => {}
+            "--recorded" | "--allow-remote-frames" | "--headless" | "--fast" | "--synthetic" => {}
             "--question"
             | "--ai-rpm"
             | "--ai-session-tokens"
+            | "--semantic-config"
             | "--noise-config"
             | "--benchmark"
             | "--view"
@@ -182,12 +189,28 @@ fn run() -> Result<()> {
     if let Some(path) = val("--noise-config") {
         xtion_vision::perception::NoiseModel::configure(std::path::Path::new(path))?;
     }
+    if let Some(p) = val("--semantic-config") {
+        xtion_vision::semantic_config::Settings::configure(p.as_ref())?;
+    }
     let flag = |k: &str| args.iter().any(|a| a == k);
     if flag("--replay") && flag("--synthetic") {
         return Err("choose one frame source".into());
     }
+    if flag("--recorded") && !flag("--replay") {
+        return Err("--recorded requires --replay FILE".into());
+    }
     let input = if let Some(p) = val("--replay") {
-        Input::Replay(p.into())
+        if flag("--recorded") {
+            if flag("--ai-url") || flag("--headless") {
+                return Err(
+                    "saved viewer replay is offline; for JSON output use --play-semantics FILE"
+                        .into(),
+                );
+            }
+            Input::Recorded(p.into())
+        } else {
+            Input::Replay(p.into())
+        }
     } else if flag("--synthetic") {
         Input::Synthetic
     } else {
@@ -362,7 +385,7 @@ fn run() -> Result<()> {
         let mut src: Box<dyn FrameSource> = match input {
             Input::Synthetic => Box::new(SyntheticSource::default()),
             Input::Replay(p) => Box::new(ReplaySource::new(BufReader::new(File::open(p)?), false)?),
-            Input::Live => unreachable!(),
+            Input::Recorded(_) | Input::Live => unreachable!(),
         };
         let mut writer = record
             .map(|p| Recorder::new(BufWriter::new(File::create_new(p)?)))

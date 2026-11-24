@@ -20,11 +20,13 @@ use std::{
 pub enum Input {
     Live,
     Replay(String),
+    Recorded(String),
     Synthetic,
 }
 #[derive(Clone)]
 pub struct Snapshot {
     pub scene: Arc<SceneState>,
+    pub recorded_reply: Option<crate::ai::Report>,
     pub graph: Arc<crate::semantic::SemanticSceneGraph>,
     pub frame: Arc<DepthFrame>,
     pub received: Instant,
@@ -167,6 +169,10 @@ impl Pipeline {
             record: Arc::new(Mutex::new(record)),
             finished: Default::default(),
         };
+        let side_path = match &input {
+            Input::Recorded(p) => Some(crate::sidecar::path(p.as_ref())),
+            _ => None,
+        };
         let frames = Queue::new(p.drops.clone());
         let disk = Queue::new(p.recording_drops.clone());
         let (rec_queue, rec_error) = (disk.clone(), p.recording_error.clone());
@@ -191,7 +197,7 @@ impl Pipeline {
                 let paced = !matches!(input, Input::Live);
                 let mut src: Box<dyn FrameSource> = match input {
                     Input::Live => Box::new(LiveSource::open()?),
-                    Input::Replay(path) => {
+                    Input::Recorded(path) | Input::Replay(path) => {
                         Box::new(ReplaySource::new(BufReader::new(File::open(path)?), false)?)
                     }
                     Input::Synthetic => Box::new(SyntheticSource::default()),
@@ -243,6 +249,8 @@ impl Pipeline {
             let _ = recorder.join();
             out.close();
         }));
+        let playback_error = p.status.clone();
+        let stop_playback = p.stop.clone();
         let mount = p.mount_height_cm.clone();
         let (latest, threshold, recal, finished) = (
             p.latest.clone(),
@@ -251,6 +259,18 @@ impl Pipeline {
             p.finished.clone(),
         );
         p.threads.push(thread::spawn(move || {
+            let open_side = side_path
+                .map(|p| File::open(p).map(|f| crate::sidecar::Playback::new(BufReader::new(f))))
+                .transpose();
+            let mut player = match open_side {
+                Ok(p) => p,
+                Err(e) => {
+                    stop_playback.store(true, Relaxed);
+                    *playback_error.lock().unwrap() = e.to_string();
+                    finished.store(true, Release);
+                    return;
+                }
+            };
             let mut engine = Engine::default();
             let mut first = None;
             let mut semantics = None;
@@ -268,11 +288,30 @@ impl Pipeline {
                 let began = Instant::now();
                 let scene = Arc::new(engine.observe(&frame));
                 let geometry_ms = began.elapsed().as_secs_f64() * 1000.;
-                let graph = Arc::new(
-                    semantics
-                        .get_or_insert_with(|| crate::semantic::SemanticEngine::for_frame(&frame))
-                        .observe(&scene),
-                );
+                let mut graph = semantics
+                    .get_or_insert_with(|| crate::semantic::SemanticEngine::for_frame(&frame))
+                    .observe(&scene);
+                let mut recorded_reply = None;
+                if let Some(player) = &mut player {
+                    match player.at(scene.ns) {
+                        Ok(Some((saved, reply))) => {
+                            graph = saved;
+                            recorded_reply = reply;
+                        }
+                        Ok(None) => {
+                            graph.status = "missing recorded interpretation".into();
+                            graph.entities.clear();
+                            graph.relationships.clear();
+                            graph.activities.clear();
+                        }
+                        Err(e) => {
+                            *playback_error.lock().unwrap() = e.to_string();
+                            stop_playback.store(true, Relaxed);
+                            break;
+                        }
+                    }
+                }
+                let graph = Arc::new(graph);
                 let processing_ms = began.elapsed().as_secs_f64() * 1000.;
                 processed += 1;
                 perception_total += geometry_ms;
@@ -308,6 +347,7 @@ impl Pipeline {
                 };
                 *latest.lock().unwrap() = Some(Snapshot {
                     graph,
+                    recorded_reply,
                     scene,
                     frame,
                     received,

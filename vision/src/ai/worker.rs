@@ -323,7 +323,7 @@ impl Interpreter {
             rt.block_on(async move {
                 let work = async {
                     let mut api = Api {
-                        rejections: Default::default(),
+                        rejections: Default::default(),claims_seen:0,rejected_claims:0,
                         quota: Default::default(),
                         client,
                         responses: Default::default(),
@@ -406,6 +406,8 @@ impl Interpreter {
                                 .collect();
                         }
                         report.question = question.map(|(q, _)| q);
+                        let quota=api.quota.borrow();
+                        report.accounting=json!({"http_attempts":quota.attempts,"reported_tokens":quota.reported,"charged_tokens":quota.charged(),"claims_seen":api.claims_seen,"claims_withheld":api.rejected_claims});
                         report.rejections = api.rejections.clone();
                         report.model = api.model.clone().unwrap_or_default();
                         report.signature = sig;
@@ -589,6 +591,8 @@ impl Drop for Interpreter {
     }
 }
 struct Api {
+    claims_seen: u64,
+    rejected_claims: u64,
     rejections: std::collections::BTreeMap<String, u64>,
     quota: std::cell::RefCell<super::quota::Quota>,
     responses: std::cell::Cell<Option<bool>>,
@@ -1336,6 +1340,11 @@ impl Api {
             let raw = v["choices"][0]["message"]["content"].as_str().unwrap_or("");
             if let Some(g) = graph {
                 let packet: Value = serde_json::from_str(&packet)?;
+                let count = serde_json::from_str::<Value>(raw)
+                    .ok()
+                    .and_then(|v| v["claims"].as_array().map(|a| a.len()))
+                    .unwrap_or(0) as u64;
+                self.claims_seen += count;
                 match super::grounding::validate(raw, &packet, g) {
                     Ok((reply, claims)) => {
                         let mut text = vec![];
@@ -1375,6 +1384,7 @@ impl Api {
                         });
                     }
                     Err(category) => {
+                        self.rejected_claims += count;
                         *self.rejections.entry(category.into()).or_default() += 1;
                         tries += 1;
                         if tries >= 2 {

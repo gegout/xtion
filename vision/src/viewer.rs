@@ -280,6 +280,10 @@ impl Viewer {
         }
     }
     fn refresh_connection(&mut self) {
+        if matches!(self.input, Input::Recorded(_)) {
+            self.error = "Recorded interpretation playback runs offline".into();
+            return;
+        }
         let mut next = self.config.clone();
         next.url = self.endpoint.trim().trim_end_matches('/').to_owned();
         let key = self.api_key.trim();
@@ -486,30 +490,6 @@ impl Viewer {
                 ));
             }
         });
-        ui.collapsing("Ask about the scene", |ui| {
-            ui.text_edit_singleline(&mut self.question);
-            if ui.button("Ask").clicked() {
-                let a = xtion_vision::dialogue::answer(
-                    &s.graph,
-                    &self.question,
-                    &self.selected_entities,
-                );
-                self.answer = format!("{} · {} {}", a.source, a.text, a.evidence.join(", "));
-                if self.frozen.is_none()
-                    && let Some(worker) = &mut self.ai
-                {
-                    worker.ask(
-                        s.scene.clone(),
-                        s.frame.clone(),
-                        s.graph.clone(),
-                        self.config.refresh,
-                        self.question.clone(),
-                        self.selected_entities.clone(),
-                    );
-                }
-            }
-            ui.label(&self.answer);
-        });
         ui.small(format!("Acquisition {:.1} FPS · perception {:.1} FPS · render {:.1} FPS · {:.1} ms processing · {:.1} ms arrival to result · {:.0}% valid",live.acquisition_fps,live.recent_fps,self.cloud.render_fps,live.processing_ms,live.latency_ms,100.*live.scene.valid_fraction));
         ui.checkbox(&mut self.overlays, "Depth tracking overlays");
         ui.collapsing("Measure and inspect",|ui|{
@@ -596,7 +576,7 @@ impl Viewer {
             Pipeline::with_capture_rate(input, self.threshold, None, None, self.capture_fps);
         self.texture_key = (0, 0);
         self.responses.clear();
-        if self.ai.take().is_some() {
+        if self.ai.take().is_some() && !matches!(self.input, Input::Recorded(_)) {
             match Interpreter::start(self.config.clone()) {
                 Ok(a) => self.ai = Some(a),
                 Err(e) => self.error = e.to_string(),
@@ -637,18 +617,24 @@ impl eframe::App for Viewer {
         let ai = snap
             .as_ref()
             .and_then(|s| self.ai.as_ref()?.latest(&s.scene));
-        if let Some(s) = &mut snap {
+        if !matches!(self.input, Input::Recorded(_))
+            && let Some(s) = &mut snap
+        {
             self.labels.apply(
                 std::sync::Arc::make_mut(&mut s.graph),
                 ai.as_ref().map_or(&[], |r| r.label_votes.as_slice()),
             );
         }
+        let ai = ai.or_else(|| snap.as_ref()?.recorded_reply.clone());
         let recording = self.pipe.record.lock().unwrap().clone();
         if recording != self.sidecar_path {
             self.sidecar_path = recording.clone();
             self.sidecar = None;
             if let Some(path) = recording {
-                match xtion_vision::sidecar::Writer::new(path.as_ref()) {
+                match xtion_vision::sidecar::Writer::after(
+                    path.as_ref(),
+                    self.chat.snapshot().last().map_or(0, |e| e.id),
+                ) {
                     Ok(w) => self.sidecar = Some(w),
                     Err(e) => self.error = e.to_string(),
                 }
@@ -733,6 +719,7 @@ impl eframe::App for Viewer {
                         if ui.button("Open replay").clicked() {
                             self.restart(Input::Replay(self.replay_path.clone()))
                         }
+                        if ui.button("Replay saved interpretations").clicked(){self.restart(Input::Recorded(self.replay_path.clone()));}
                         ui.label("Recording file");
                         ui.text_edit_singleline(&mut self.record_path);
                         ui.horizontal(|ui| {
@@ -858,6 +845,33 @@ impl eframe::App for Viewer {
             )
             .show(ui, |ui| {
                 ui.take_available_space();
+                if let Some(s) = self.frozen.as_ref().or(snap.as_ref()) {
+                    ui.collapsing("Ask about the scene", |ui| {
+                        ui.text_edit_singleline(&mut self.question);
+                        if ui.button("Ask").clicked() {
+                            let a = xtion_vision::dialogue::answer(
+                                &s.graph,
+                                &self.question,
+                                &self.selected_entities,
+                            );
+                            self.answer =
+                                format!("{} · {} {}", a.source, a.text, a.evidence.join(", "));
+                            if self.frozen.is_none()
+                                && let Some(worker) = &mut self.ai
+                            {
+                                worker.ask(
+                                    s.scene.clone(),
+                                    s.frame.clone(),
+                                    s.graph.clone(),
+                                    self.config.refresh,
+                                    self.question.clone(),
+                                    self.selected_entities.clone(),
+                                );
+                            }
+                        }
+                        ui.label(&self.answer);
+                    });
+                }
                 ui.horizontal(|ui| {
                     ui.image((self.response_mark.id(), Vec2::splat(26.)));
                     ui.label(

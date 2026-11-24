@@ -66,13 +66,18 @@ pub(super) fn package(
         let y = (e.image_bounds[1] + e.image_bounds[3]) / 2 * rows / f.info.height;
         mark(&mut depth, w, rows, x, y, &mark_id);
         mark(&mut shaded, w, rows, x, y, &mark_id);
-        entities.push(json!({"mark":mark_id,"observations":e.evidence.iter().map(|v|&v.observation).collect::<Vec<_>>(),"members":e.members,"position_m":e.position_m,"bounds_m":e.bounds_m,"z_m":e.median_z_m,"velocity_m_s":e.velocity_m_s,"quality":e.quality,"moving":e.moving}));
+        let trajectory = s
+            .objects
+            .iter()
+            .find(|o| e.members.contains(&o.id))
+            .map(|o| o.trajectory.iter().rev().take(4).rev().collect::<Vec<_>>());
+        entities.push(json!({"mark":mark_id,"trajectory":trajectory,"axial_sigma_m":e.axial_sigma_m,"previous_labels":e.labels,"observations":e.evidence.iter().map(|v|&v.observation).collect::<Vec<_>>(),"members":e.members,"position_m":e.position_m,"bounds_m":e.bounds_m,"z_m":e.median_z_m,"velocity_m_s":e.velocity_m_s,"quality":e.quality,"moving":e.moving}));
     }
     let mut relations = g.relationships.iter().take(12).collect::<Vec<_>>();
     let mut activity = g.activities.iter().rev().take(6).collect::<Vec<_>>();
     let packet = loop {
-        let p=json!({"schema":"xtion.observations/3","id":s.id,"ns":s.ns,"optics":s.optics,"frame":"sensor","health":s.health,"status":s.status,"support_plane":s.floor_estimate,"entities":entities,"relationships":relations,"activities":activity}).to_string();
-        if p.len() <= 8192 {
+        let p=json!({"schema":"xtion.observations/3","id":s.id,"ns":s.ns,"allowed_labels":crate::semantic_config::Settings::get().labels,"ticks":s.ticks,"optics":s.optics,"frame":"sensor","health":s.health,"status":s.status,"support_plane":s.floor_estimate,"entities":entities,"relationships":relations,"activities":activity}).to_string();
+        if p.len() <= crate::semantic_config::Settings::get().spatial_budget_bytes {
             break p;
         }
         if relations.pop().is_none() && activity.pop().is_none() && entities.pop().is_none() {

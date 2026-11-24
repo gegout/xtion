@@ -7,6 +7,8 @@ use std::{
 pub(super) struct Quota {
     requests: VecDeque<Instant>,
     tokens: u64,
+    pub attempts: u64,
+    pub reported: u64,
 }
 impl Quota {
     pub fn reserve(
@@ -25,11 +27,16 @@ impl Quota {
             return Err("AI session token budget reached");
         }
         self.tokens = self.tokens.saturating_add(reserve);
+        self.attempts += 1;
         self.requests.push_back(at);
         Ok(())
     }
+    pub fn charged(&self) -> u64 {
+        self.tokens
+    }
     pub fn settle(&mut self, reserved: u64, total: Option<u64>) {
         if let Some(actual) = total {
+            self.reported += actual;
             self.tokens = self.tokens.saturating_sub(reserved).saturating_add(actual);
         }
     }

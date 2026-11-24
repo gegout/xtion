@@ -22,13 +22,21 @@ pub fn answer(g: &SemanticSceneGraph, question: &str, selected: &[u64]) -> Answe
         )
     };
     if q.contains("recent") || q.contains("happened") || q.contains("history") {
+        let windows = crate::semantic_config::Settings::get().history_windows_s;
+        let window = q
+            .split_whitespace()
+            .find_map(|s| s.parse::<u64>().ok())
+            .unwrap_or(windows[1]);
+        if !windows.contains(&window) {
+            return unknown();
+        }
         return respond(
             "historical",
-            crate::activity::ActivityEngine::narrative(&g.activities, g.ns, 10),
+            crate::activity::ActivityEngine::narrative(&g.activities, g.ns, window),
             g.activities
                 .iter()
                 .rev()
-                .filter(|a| g.ns.saturating_sub(a.end_ns.unwrap_or(g.ns)) <= 10_000_000_000)
+                .filter(|a| g.ns.saturating_sub(a.end_ns.unwrap_or(g.ns)) <= window * 1_000_000_000)
                 .take(5)
                 .flat_map(|a| a.evidence.clone())
                 .collect(),
@@ -53,6 +61,13 @@ pub fn answer(g: &SemanticSceneGraph, question: &str, selected: &[u64]) -> Answe
         return unknown();
     }
     if q.contains("count") || q.contains("how many") {
+        if !["entit", "object", "region", "track"]
+            .iter()
+            .any(|k| q.contains(k))
+            && !matches!(q.as_str(), "count" | "how many?")
+        {
+            return unknown();
+        }
         return respond(
             "measured now",
             format!("{} visible tracked entities.", g.entities.len()),
@@ -99,6 +114,20 @@ pub fn answer(g: &SemanticSceneGraph, question: &str, selected: &[u64]) -> Answe
         );
     }
     if let [e] = chosen.as_slice() {
+        if q.contains("distance")
+            && let Some([x, y, z]) = e.position_m
+        {
+            return respond(
+                "measured now",
+                format!(
+                    "Entity {} centroid range is {:.2} m with {:?} optics.",
+                    e.id,
+                    x.hypot(y).hypot(z),
+                    g.optics
+                ),
+                ev(e),
+            );
+        }
         if q.contains("depth") || q.contains("distance") {
             return respond(
                 "measured now",

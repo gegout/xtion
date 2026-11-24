@@ -47,7 +47,7 @@ pub(super) fn validate(
     packet: &Value,
     g: &SemanticSceneGraph,
 ) -> Result<(Interpretation, Vec<Claim>), &'static str> {
-    let r: Interpretation = serde_json::from_str(raw).map_err(|_| "schema")?;
+    let mut r: Interpretation = serde_json::from_str(raw).map_err(|_| "schema")?;
     if r.snapshot != g.snapshot {
         return Err("stale_snapshot");
     }
@@ -60,7 +60,7 @@ pub(super) fn validate(
     }
     let mut claims = vec![];
     let mut ids = std::collections::HashSet::new();
-    for c in &r.claims {
+    for c in &mut r.claims {
         if !ids.insert(&c.entity) {
             return Err("duplicate_entity");
         }
@@ -76,15 +76,9 @@ pub(super) fn validate(
         {
             return Err("unsupported_evidence");
         }
-        if ![
-            "unknown",
-            "person-like shape",
-            "hand-like shape",
-            "chair-like",
-            "table-like",
-            "box-like",
-        ]
-        .contains(&c.label.as_str())
+        if !crate::semantic_config::Settings::get()
+            .labels
+            .contains(&c.label)
         {
             return Err("unsupported_label");
         }
@@ -120,6 +114,7 @@ pub(super) fn validate(
         } else if !c.other.is_empty() {
             return Err("unknown_entity");
         }
+        c.z_m = e["z_m"].as_f64().ok_or("missing_measurement")?;
         claims.push(Claim {
             observation_id: c.evidence.clone(),
             hypothesis: c.label.clone(),

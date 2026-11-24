@@ -734,3 +734,45 @@ fn remote_data_requires_explicit_consent_before_network() {
     let c = Config::new("https://example.com/v1".into());
     assert!(Interpreter::start(c).is_err());
 }
+
+#[test]
+fn dialogue_uses_local_result_with_and_without_tools() {
+    let (s, f) = job();
+    let g = Arc::new(xtion_vision::semantic::SemanticEngine::default().observe(&s));
+    for tools_supported in [false, true] {
+        let m = mock(move |_, body| {
+            if !body["tools"].is_null() {
+                if !tools_supported {
+                    return (400, json!({"error":{"message":"unsupported tools"}}));
+                }
+                return (
+                    200,
+                    json!({"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call1","type":"function","function":{"name":"query_scene","arguments":"{}"}}]}}]}),
+                );
+            }
+            let m = body["messages"].as_array().unwrap();
+            assert!(m.iter().any(|v| {
+                v["content"]
+                    .as_str()
+                    .is_some_and(|t| t.contains("1 visible tracked entities."))
+            }));
+            if tools_supported {
+                assert!(m.iter().any(|v| v["role"] == "tool"))
+            }
+            chat("QUOTE")
+        });
+        let mut w = worker(&m, true, 600);
+        w.ask(
+            s.clone(),
+            f.clone(),
+            g.clone(),
+            Duration::ZERO,
+            "how many entities?".into(),
+            vec![],
+        );
+        let r = poll(&w, &s);
+        assert!(r.success);
+        assert_eq!(r.text, "1 visible tracked entities.");
+        assert_eq!(r.question.as_deref(), Some("how many entities?"));
+    }
+}
