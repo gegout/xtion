@@ -137,6 +137,10 @@ pub fn launch(opts: Options) -> Result<()> {
     .map_err(|e| e.to_string().into())
 }
 struct Viewer {
+    labels: xtion_vision::semantic::HypothesisStore,
+    question: String,
+    answer: String,
+    selected_entities: Vec<u64>,
     frozen: Option<xtion_vision::pipeline::Snapshot>,
     picks: Vec<([usize; 2], std::collections::VecDeque<u16>)>,
     pick_stamp: Option<u64>,
@@ -227,6 +231,10 @@ impl Viewer {
         Self {
             benchmark: o.benchmark,
             frozen: None,
+            labels: Default::default(),
+            question: String::new(),
+            answer: String::new(),
+            selected_entities: vec![],
             picks: vec![],
             pick_stamp: None,
             units: "m",
@@ -330,6 +338,11 @@ impl Viewer {
             let at = (mouse - canvas.min) / scale;
             self.pick(&s.frame, [at.x as usize, at.y as usize]);
         }
+        for e in &s.graph.entities {
+            let at =
+                canvas.min + Vec2::new(e.image_bounds[0] as f32, e.image_bounds[1] as f32) * scale;
+            self.cloud.paint_entity(ui.painter(), at, e, &s.graph);
+        }
         if !self.overlays {
             return;
         }
@@ -404,6 +417,83 @@ impl Viewer {
             }
         });
         let s = self.frozen.as_ref().unwrap_or(live);
+        ui.collapsing("Semantic scene graph", |ui| {
+            ui.checkbox(
+                &mut self.cloud.entity_marks,
+                "Entity marks and visible bounds",
+            );
+            ui.checkbox(&mut self.cloud.activity_marks, "Activity labels");
+            ui.checkbox(&mut self.cloud.relationship_marks, "Spatial relationships");
+            for e in &s.graph.entities {
+                let selected = self.selected_entities.contains(&e.id);
+                if ui
+                    .selectable_label(
+                        selected,
+                        format!(
+                            "E{} · {:.2} m forward · quality {:.0}%",
+                            e.id,
+                            e.median_z_m,
+                            e.quality * 100.
+                        ),
+                    )
+                    .clicked()
+                {
+                    if selected {
+                        self.selected_entities.retain(|id| *id != e.id)
+                    } else {
+                        if self.selected_entities.len() == 2 {
+                            self.selected_entities.remove(0);
+                        }
+                        self.selected_entities.push(e.id);
+                    }
+                }
+                if selected {
+                    ui.small(format!(
+                        "Sensor XYZ {:?} · {:?} optics · members {:?}",
+                        e.position_m, s.graph.optics, e.members
+                    ));
+                    for h in &e.labels {
+                        ui.colored_label(
+                            AUBERGINE,
+                            format!("AI hypothesis · {} · {:?}", h.label, h.evidence),
+                        );
+                    }
+                }
+            }
+            for r in s.graph.relationships.iter().take(16) {
+                ui.small(format!(
+                    "E{} {} {} · {}",
+                    r.subject, r.predicate, r.object, r.frame
+                ));
+            }
+        });
+        ui.collapsing("Activity timeline", |ui| {
+            for a in s.graph.activities.iter().rev().take(16) {
+                ui.small(format!(
+                    "{:.1} s · E{} {} · {}",
+                    a.start_ns as f64 / 1e9,
+                    a.entity,
+                    a.kind,
+                    if a.end_ns.is_none() {
+                        "ongoing"
+                    } else {
+                        "ended"
+                    }
+                ));
+            }
+        });
+        ui.collapsing("Ask about the scene", |ui| {
+            ui.text_edit_singleline(&mut self.question);
+            if ui.button("Ask").clicked() {
+                let a = xtion_vision::dialogue::answer(
+                    &s.graph,
+                    &self.question,
+                    &self.selected_entities,
+                );
+                self.answer = format!("{} · {} {}", a.source, a.text, a.evidence.join(", "));
+            }
+            ui.label(&self.answer);
+        });
         ui.small(format!("Acquisition {:.1} FPS · perception {:.1} FPS · render {:.1} FPS · {:.1} ms processing · {:.1} ms arrival to result · {:.0}% valid",live.acquisition_fps,live.recent_fps,self.cloud.render_fps,live.processing_ms,live.latency_ms,100.*live.scene.valid_fraction));
         ui.checkbox(&mut self.overlays, "Depth tracking overlays");
         ui.collapsing("Measure and inspect",|ui|{
@@ -480,6 +570,9 @@ impl Viewer {
             return;
         }
         self.frozen = None;
+        self.labels = Default::default();
+        self.selected_entities.clear();
+        self.answer.clear();
         self.picks.clear();
         self.pick_stamp = None;
         self.input = input.clone();
@@ -511,7 +604,7 @@ impl eframe::App for Viewer {
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         ctx.request_repaint_after(Duration::from_millis(30));
-        let snap = self.pipe.latest.lock().unwrap().clone();
+        let mut snap = self.pipe.latest.lock().unwrap().clone();
         let status = self.pipe.status.lock().unwrap().clone();
         if let Some(s) = &snap
             && s.received.elapsed() < Duration::from_millis(500)
@@ -528,6 +621,12 @@ impl eframe::App for Viewer {
         let ai = snap
             .as_ref()
             .and_then(|s| self.ai.as_ref()?.latest(&s.scene));
+        if let Some(s) = &mut snap {
+            self.labels.apply(
+                std::sync::Arc::make_mut(&mut s.graph),
+                ai.as_ref().map_or(&[], |r| r.label_votes.as_slice()),
+            );
+        }
         if let Some(r) = ai
             && r.success
             && self.responses.back().is_none_or(|old| {

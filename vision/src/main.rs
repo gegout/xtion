@@ -44,6 +44,7 @@ fn main() {
     }
 }
 struct Output {
+    labels: xtion_vision::semantic::HypothesisStore,
     question: Option<String>,
     ai: Option<Interpreter>,
     refresh: Duration,
@@ -79,12 +80,17 @@ impl Output {
             a.submit_graph(s.clone(), f, self.refresh, Arc::new(graph.clone()));
             a.latest(&s)
         });
+        let mut graph = graph.clone();
+        self.labels.apply(
+            &mut graph,
+            report.as_ref().map_or(&[], |r| r.label_votes.as_slice()),
+        );
         let mut w = self.stdout.lock();
         if let Some(q) = &self.question {
             writeln!(
                 w,
                 "{}",
-                serde_json::json!({"type":"answer","question":q,"answer":xtion_vision::dialogue::answer(graph,q,&[])})
+                serde_json::json!({"type":"answer","question":q,"answer":xtion_vision::dialogue::answer(&graph,q,&[])})
             )?;
         }
         let offset = self
@@ -271,6 +277,7 @@ fn run() -> Result<()> {
         stop.load(Ordering::Acquire) || seconds.is_some_and(|s| start.elapsed().as_secs_f64() >= s)
     };
     let mut out = Output {
+        labels: Default::default(),
         question: val("--question").map(str::to_owned),
         refresh: config.as_ref().map(|c| c.refresh).unwrap_or_default(),
         ai: config.map(Interpreter::start).transpose()?,

@@ -82,6 +82,7 @@ pub struct Report {
     #[serde(skip)]
     pub history_key: Option<String>,
     pub claims: Vec<Claim>,
+    pub label_votes: Vec<crate::semantic::LabelVote>,
     pub supporting_ids: Vec<String>,
     pub usage: Value,
     pub latency_ms: u64,

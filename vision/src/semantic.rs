@@ -378,3 +378,78 @@ fn coherent(a: &TrackedObject, b: &TrackedObject) -> bool {
         && dist(v, [0.; 3]) > 0.12
         && v.iter().zip(w).map(|(a, b)| a * b).sum::<f64>() > 0.
 }
+
+/// A proposed label cannot write geometry. Votes are scoped to an exact fragment membership.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LabelVote {
+    pub entity: u64,
+    pub members: Vec<u64>,
+    pub label: String,
+    pub evidence: String,
+    pub ns: u64,
+}
+#[derive(Default)]
+pub struct HypothesisStore {
+    votes: BTreeMap<u64, Vec<LabelVote>>,
+}
+impl HypothesisStore {
+    pub fn apply(&mut self, g: &mut SemanticSceneGraph, incoming: &[LabelVote]) {
+        self.votes.retain(|id, v| {
+            v.retain(|p| {
+                g.ns.checked_sub(p.ns)
+                    .is_some_and(|age| age <= 30_000_000_000)
+                    && g.entities
+                        .iter()
+                        .any(|e| e.id == *id && e.members == p.members && e.quality > 0.1)
+            });
+            !v.is_empty()
+        });
+        for p in incoming {
+            if ![
+                "person-like shape",
+                "hand-like shape",
+                "chair-like",
+                "table-like",
+                "box-like",
+                "seated person-like",
+                "unclassified surface",
+            ]
+            .contains(&p.label.as_str())
+                || p.evidence.is_empty()
+                || !g
+                    .entities
+                    .iter()
+                    .any(|e| e.id == p.entity && e.members == p.members && e.quality > 0.1)
+                || !g.ns.checked_sub(p.ns).is_some_and(|d| d <= 30_000_000_000)
+            {
+                continue;
+            }
+            let v = self.votes.entry(p.entity).or_default();
+            if v.last()
+                .is_some_and(|old| old.ns >= p.ns || old.evidence == p.evidence)
+            {
+                continue;
+            }
+            if v.last().is_some_and(|old| old.label != p.label) {
+                v.clear();
+            }
+            v.push(p.clone());
+            if v.len() > 3 {
+                v.remove(0);
+            }
+        }
+        for e in &mut g.entities {
+            e.labels.clear();
+            if let Some(v) = self.votes.get(&e.id)
+                && v.len() == 3
+            {
+                e.labels.push(SemanticHypothesis {
+                    label: v[2].label.clone(),
+                    evidence: v.iter().map(|p| p.evidence.clone()).collect(),
+                    provenance: Provenance::AiHypothesis,
+                    expires_ns: v[0].ns.saturating_add(30_000_000_000),
+                });
+            }
+        }
+    }
+}

@@ -352,6 +352,26 @@ impl Interpreter {
                                 }
                             }
                         };
+                        if report.success
+                            && let Some(g) = &graph
+                        {
+                            report.label_votes = report
+                                .claims
+                                .iter()
+                                .filter_map(|c| {
+                                    let e = g.entities.iter().find(|e| {
+                                        e.evidence.iter().any(|v| v.observation == c.observation_id)
+                                    })?;
+                                    Some(crate::semantic::LabelVote {
+                                        entity: e.id,
+                                        members: e.members.clone(),
+                                        label: c.hypothesis.clone(),
+                                        evidence: c.observation_id.clone(),
+                                        ns: g.ns,
+                                    })
+                                })
+                                .collect();
+                        }
                         report.model = api.model.clone().unwrap_or_default();
                         report.signature = sig;
                         report.scene_id = s.id.clone();

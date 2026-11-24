@@ -30,6 +30,9 @@ struct RenderSettings {
 }
 type PickResult = Result<(Arc<DepthFrame>, [usize; 2]), &'static str>;
 pub struct CloudView {
+    pub entity_marks: bool,
+    pub activity_marks: bool,
+    pub relationship_marks: bool,
     auto_density: bool,
     load_stride: usize,
     sample_since: Option<std::time::Instant>,
@@ -70,6 +73,9 @@ impl CloudView {
         Self {
             mode,
             auto_density: true,
+            entity_marks: true,
+            activity_marks: false,
+            relationship_marks: false,
             load_stride: 0,
             sample_since: None,
             sample_draws: 0,
@@ -102,6 +108,55 @@ impl CloudView {
             points: Default::default(),
             rgb: vec![],
             texture: None,
+        }
+    }
+    pub fn paint_entity(
+        &self,
+        painter: &egui::Painter,
+        at: egui::Pos2,
+        e: &xtion_vision::semantic::SemanticEntity,
+        g: &xtion_vision::semantic::SemanticSceneGraph,
+    ) {
+        let mut lines = vec![];
+        if self.entity_marks {
+            lines.push(format!("E{}", e.id));
+        }
+        if self.activity_marks {
+            lines.extend(
+                g.activities
+                    .iter()
+                    .filter(|a| a.entity == e.id && a.end_ns.is_none())
+                    .map(|a| a.kind.clone()),
+            );
+        }
+        if self.relationship_marks {
+            lines.extend(
+                g.relationships
+                    .iter()
+                    .filter(|r| r.subject == e.id)
+                    .take(2)
+                    .map(|r| format!("{} {}", r.predicate, r.object)),
+            );
+        }
+        if !lines.is_empty() {
+            painter.text(
+                at,
+                egui::Align2::LEFT_TOP,
+                lines.join("\n"),
+                egui::FontId::proportional(13.),
+                Color32::LIGHT_BLUE,
+            );
+        }
+        if self.entity_marks
+            && let Some(h) = e.labels.first()
+        {
+            painter.text(
+                at,
+                egui::Align2::LEFT_BOTTOM,
+                format!("AI · {}?", h.label),
+                egui::FontId::proportional(13.),
+                Color32::GOLD,
+            );
         }
     }
     pub fn controls(&mut self, ui: &mut egui::Ui) {
@@ -527,6 +582,45 @@ impl CloudView {
                             [points[j], points[(j + 1) % 3]],
                             egui::Stroke::new(1., Color32::from_rgb(f.rgb[0], f.rgb[1], f.rgb[2])),
                         );
+                    }
+                }
+            }
+        }
+        if Arc::ptr_eq(frame, input) {
+            for e in &snapshot.graph.entities {
+                if let Some([x, y, z]) = e.position_m
+                    && let Some(p) = self.camera.project(Point3D { x, y, z }, size)
+                {
+                    self.paint_entity(
+                        &painter,
+                        rect.min + Vec2::new(p[0] as f32, p[1] as f32),
+                        e,
+                        &snapshot.graph,
+                    );
+                }
+                if self.entity_marks
+                    && let Some([lo, hi]) = e.bounds_m
+                {
+                    for i in 0u8..8 {
+                        for axis in 0..3 {
+                            if i & (1 << axis) != 0 {
+                                continue;
+                            }
+                            let screen = |bits: u8| {
+                                let [x, y, z] = std::array::from_fn(|k| {
+                                    if bits & (1u8 << k) == 0 { lo[k] } else { hi[k] }
+                                });
+                                self.camera
+                                    .project(Point3D { x, y, z }, size)
+                                    .map(|p| rect.min + Vec2::new(p[0] as f32, p[1] as f32))
+                            };
+                            if let (Some(a), Some(b)) = (screen(i), screen(i | (1 << axis))) {
+                                painter.line_segment(
+                                    [a, b],
+                                    egui::Stroke::new(1., Color32::LIGHT_BLUE),
+                                );
+                            }
+                        }
                     }
                 }
             }
