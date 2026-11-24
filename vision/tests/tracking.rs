@@ -337,3 +337,35 @@ fn established_foreground_keeps_its_measured_extent_when_it_meets_a_static_surfa
         }
     }
 }
+
+#[test]
+fn sparse_coplanar_change_does_not_label_a_learned_wall_as_a_moving_region() {
+    let mut source = SyntheticSource::default();
+    let mut engine = Engine::default();
+    for t in 0..14 {
+        let mut frame = source.next_frame().unwrap().unwrap();
+        let (w, h) = (320, 240);
+        frame.info.width = w;
+        frame.info.height = h;
+        frame.info.intrinsics = xtion_vision::CameraIntrinsics::nominal(w, h);
+        frame.pixels = vec![3000; w * h];
+        for row in frame.pixels.chunks_exact_mut(w).skip(24).take(192) {
+            row[48..272].fill(1800);
+        }
+        for row in frame.pixels.chunks_exact_mut(w).skip(80).take(32) {
+            row[120..152].fill(if t < 6 {
+                2800
+            } else if t < 10 {
+                1800
+            } else {
+                // Step toward the camera by five centimetres per frame.
+                1800 - 50 * (t - 9)
+            });
+        }
+        let state = engine.observe(&frame);
+        if t >= 8 {
+            assert_eq!(state.objects.len(), 1, "frame {t}");
+            assert_eq!(state.objects[0].region.samples, 64);
+        }
+    }
+}

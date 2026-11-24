@@ -3,7 +3,7 @@ use crate::{CaptureHealth, DepthFrame, IntrinsicsSource, geometry::Point3D};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 const STEP: usize = 4;
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct NoiseModel {
     pub source: String,
     pub a_mm: f64,
@@ -17,13 +17,48 @@ pub struct NoiseModel {
     pub min_seed_fraction: f64,
     pub edge_probe_cells: usize,
 }
+static CONFIGURED_NOISE: std::sync::OnceLock<NoiseModel> = std::sync::OnceLock::new();
 impl Default for NoiseModel {
     fn default() -> Self {
-        serde_json::from_str(include_str!("../config/spatial-noise.json"))
-            .expect("valid built-in noise model")
+        static BUILTIN: std::sync::LazyLock<NoiseModel> = std::sync::LazyLock::new(|| {
+            serde_json::from_str(include_str!("../config/spatial-noise.json"))
+                .expect("valid built-in noise model")
+        });
+        CONFIGURED_NOISE.get().unwrap_or(&BUILTIN).clone()
     }
 }
 impl NoiseModel {
+    /// Install a process-wide calibration before starting sources or workers.
+    pub fn configure(path: &std::path::Path) -> crate::source::Result<()> {
+        let model: Self = serde_json::from_reader(std::fs::File::open(path)?)?;
+        model.validate()?;
+        CONFIGURED_NOISE
+            .set(model)
+            .map_err(|_| "spatial noise model already configured".into())
+    }
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.source.trim().is_empty()
+            || self.min_range_mm == 0
+            || self.min_range_mm >= self.max_range_mm
+            || !(self.a_mm.is_finite()
+                && self.a_mm > 0.
+                && self.b_mm_per_m2.is_finite()
+                && self.b_mm_per_m2 >= 0.)
+            || ![
+                self.k_connect,
+                self.k_retained,
+                self.k_filter,
+                self.k_unstable,
+            ]
+            .iter()
+            .all(|k| k.is_finite() && *k > 0.)
+            || !(0.0..=1.0).contains(&self.min_seed_fraction)
+            || self.edge_probe_cells == 0
+        {
+            return Err("invalid spatial noise model or operating range");
+        }
+        Ok(())
+    }
     pub fn sigma_mm(&self, depth_mm: f64) -> f64 {
         self.a_mm + self.b_mm_per_m2 * (depth_mm / 1000.).powi(2)
     }
@@ -107,6 +142,7 @@ struct Track {
 pub struct Engine {
     background: Vec<f64>,
     floor: Option<crate::planes::Plane>,
+    structural_reference: Vec<u16>,
     size: (usize, usize),
     tracks: Vec<Track>,
     next: u64,
@@ -186,6 +222,7 @@ impl Engine {
     pub fn recalibrate(&mut self) {
         self.background.clear();
         self.floor = None;
+        self.structural_reference.clear();
         self.temporal.clear();
         self.protected.clear();
         self.direct_track.clear();
@@ -224,6 +261,24 @@ impl Engine {
             self.previous_seeds.resize(gw * gh, 0);
             self.prior_ids.resize(gw * gh, 0);
             self.temporal.resize(w * h, (0., 0.));
+        }
+        if self.warmup == 4
+            && self.structural_reference.is_empty()
+            && let Some(cloud) = f.organised_cloud()
+        {
+            let planes = crate::planes::structural_planes(f, &self.noise);
+            self.structural_reference.resize(gw * gh, 0);
+            for ((u, v), p) in cloud.samples(std::num::NonZeroUsize::new(STEP).unwrap()) {
+                let mm = f.pixels[v * w + u];
+                if planes.iter().any(|plane| {
+                    let [x, y, z] = plane.normal;
+                    (y.abs() < 0.25 || y > 0.8)
+                        && ((x * p.x + y * p.y + z * p.z) - plane.offset).abs() * 1000.
+                            <= self.noise.k_filter * self.noise.sigma_mm(mm.into())
+                }) {
+                    self.structural_reference[v / STEP * gw + u / STEP] = mm;
+                }
+            }
         }
         if self.serial % 30 == 1 {
             self.floor =
@@ -560,6 +615,25 @@ impl Engine {
                         independent[k] = grid[k] > 0;
                     }
                     continue;
+                }
+                // Preserve the measured-seed fallback for a patch lying on a
+                // background plane. Removing plane pixels before flood fill can
+                // make isolated, unstable depth residuals look like a solid object.
+                if !seed_only && seeds * 2 < count && !self.structural_reference.is_empty() {
+                    let structural = component
+                        .iter()
+                        .filter(|&&k| {
+                            let reference = self.structural_reference[k];
+                            let live = f.pixels[(k / gw) * STEP * w + (k % gw) * STEP];
+                            reference > 0
+                                && grid[k] == 0
+                                && f64::from(reference.abs_diff(live))
+                                    <= self.noise.k_filter * self.noise.sigma_mm(reference.into())
+                        })
+                        .count();
+                    if structural * 5 >= 4 * count {
+                        continue;
+                    }
                 }
                 if seeds >= 6
                     && (count >= (gw * gh / 700).max(6) || seeds == count)

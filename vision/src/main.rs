@@ -26,6 +26,7 @@ const HELP: &str = "xtion-vision [--headless] [--replay PATH | --synthetic] [--f
     --view depth|points|surface|split   Desktop view (default depth)
     --point-renderer cpu|glow  Override automatic point rendering path
     --png VIEW.png      Save desktop window
+    --noise-config FILE     Load a spatial noise model and thresholds at startup
     --benchmark NEW.json    Write desktop acquisition and rendering metrics on exit
     --export NEW_DIR    Export the first metric snapshot and trajectories (headless)
     --ply NEW.ply       Export first metric cloud in headless mode
@@ -104,11 +105,11 @@ fn run() -> Result<()> {
     while idx < args.len() {
         match args[idx].as_str() {
             "--headless" | "--fast" | "--synthetic" => {}
-            "--benchmark" | "--view" | "--point-renderer" | "--capture-fps" | "--replay"
-            | "--record" | "--png" | "--export" | "--ply" | "--seconds" | "--threshold-mm"
-            | "--ai-url" | "--ai-model" | "--ai-refresh-ms" | "--ai-min-words"
-            | "--ai-max-words" | "--ai-timeout-ms" | "--ai-budget-ms" | "--ai-candidates"
-            | "--ai-tokens" | "--ai-probe-tokens" => {
+            "--noise-config" | "--benchmark" | "--view" | "--point-renderer" | "--capture-fps"
+            | "--replay" | "--record" | "--png" | "--export" | "--ply" | "--seconds"
+            | "--threshold-mm" | "--ai-url" | "--ai-model" | "--ai-refresh-ms"
+            | "--ai-min-words" | "--ai-max-words" | "--ai-timeout-ms" | "--ai-budget-ms"
+            | "--ai-candidates" | "--ai-tokens" | "--ai-probe-tokens" => {
                 idx += 1;
                 if args
                     .get(idx)
@@ -122,6 +123,9 @@ fn run() -> Result<()> {
         idx += 1
     }
     let val = |k: &str| args.windows(2).find(|a| a[0] == k).map(|a| a[1].as_str());
+    if let Some(path) = val("--noise-config") {
+        xtion_vision::perception::NoiseModel::configure(std::path::Path::new(path))?;
+    }
     let flag = |k: &str| args.iter().any(|a| a == k);
     if flag("--replay") && flag("--synthetic") {
         return Err("choose one frame source".into());
