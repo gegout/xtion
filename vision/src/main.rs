@@ -26,6 +26,7 @@ const HELP: &str = "xtion-vision [--headless] [--replay PATH | --synthetic] [--f
     --view depth|points|split   Desktop view (default depth)
     --point-renderer cpu|glow  Override automatic point rendering path
     --png VIEW.png      Save desktop window
+    --export NEW_DIR    Export the first metric snapshot and trajectories (headless)
     --ply NEW.ply       Export first metric cloud in headless mode
     --threshold-mm N    Minimum foreground depth difference (40..65535)
     --ai-url BASE       Enable AI at this Chat Completions endpoint
@@ -45,10 +46,20 @@ struct Output {
     refresh: Duration,
     last_event: Option<String>,
     ply: Option<String>,
+    export: Option<String>,
     stdout: io::Stdout,
 }
 impl Output {
     fn emit(&mut self, s: Arc<SceneState>, f: Arc<DepthFrame>) -> Result<()> {
+        if let Some(dir) = self.export.take() {
+            xtion_vision::spatial_export::export(
+                std::path::Path::new(&dir),
+                &f,
+                &s,
+                xtion_vision::geometry::Transform::IDENTITY,
+                Default::default(),
+            )?;
+        }
         if self.ply.is_some()
             && let Some(cloud) = f.point_cloud()
         {
@@ -89,7 +100,7 @@ fn run() -> Result<()> {
         match args[idx].as_str() {
             "--headless" | "--fast" | "--synthetic" => {}
             "--view" | "--point-renderer" | "--capture-fps" | "--replay" | "--record" | "--png"
-            | "--ply" | "--seconds" | "--threshold-mm" | "--ai-url" | "--ai-model"
+            | "--export" | "--ply" | "--seconds" | "--threshold-mm" | "--ai-url" | "--ai-model"
             | "--ai-refresh-ms" | "--ai-min-words" | "--ai-max-words" | "--ai-timeout-ms"
             | "--ai-budget-ms" | "--ai-candidates" | "--ai-tokens" | "--ai-probe-tokens" => {
                 idx += 1;
@@ -214,6 +225,7 @@ fn run() -> Result<()> {
     let mut out = Output {
         refresh: config.as_ref().map(|c| c.refresh).unwrap_or_default(),
         ai: config.map(Interpreter::start).transpose()?,
+        export: val("--export").map(str::to_owned),
         ply: val("--ply").map(str::to_owned),
         last_event: None,
         stdout: io::stdout(),
