@@ -3,5 +3,11 @@
   "a_mm": 3.0,
   "b_mm_per_m2": 1.4,
   "min_range_mm": 800,
-  "max_range_mm": 3500
+  "max_range_mm": 3500,
+  "k_retained": 60.0,
+  "k_connect": 12.0,
+  "k_filter": 3.0,
+  "k_unstable": 3.0,
+  "edge_probe_cells": 5,
+  "min_seed_fraction": 0.025
 }

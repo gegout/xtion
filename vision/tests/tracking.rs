@@ -88,3 +88,252 @@ fn raw_shifts_are_never_measured_as_metres() {
         assert_eq!(s.sector_z_m, [None; 3]);
     }
 }
+
+#[test]
+fn separates_adjacent_objects_across_a_depth_step_and_marks_missing_pixels() {
+    let mut source = SyntheticSource::default();
+    let mut engine = Engine::default();
+    for t in 0..20 {
+        let mut frame = source.next_frame().unwrap().unwrap();
+        let w = frame.info.width;
+        frame.pixels.fill(3000);
+        if t >= 6 {
+            for y in 12..48 {
+                frame.pixels[y * w + 16..y * w + 40].fill(1300);
+                frame.pixels[y * w + 40..y * w + 64].fill(1700);
+            }
+            frame.pixels[20 * w + 24] = 0;
+        }
+        let state = engine.observe(&frame);
+        if t > 7 {
+            assert_eq!(state.objects.len(), 2);
+            assert_eq!(engine.quality[20 * w + 24], 1);
+            assert_ne!(engine.quality[24 * w + 39] & 4, 0);
+            assert!((state.objects[0].region.z - state.objects[1].region.z).abs() > 0.35);
+            assert!(state.objects.iter().all(|o| !o.moving));
+        }
+    }
+}
+
+#[test]
+fn a_step_in_a_tracked_silhouette_preserves_its_id_but_separate_surfaces_stay_separate() {
+    for initially_separate in [false, true] {
+        let mut source = SyntheticSource::default();
+        let mut engine = Engine::default();
+        let mut initial_ids = Vec::new();
+        for t in 0..18 {
+            let mut frame = source.next_frame().unwrap().unwrap();
+            let w = frame.info.width;
+            frame.pixels.fill(3000);
+            if t >= 6 {
+                for row in frame.pixels.chunks_exact_mut(w).take(48).skip(12) {
+                    row[16..40].fill(1400);
+                    row[40..64].fill(if t < 12 && !initially_separate {
+                        1400
+                    } else {
+                        1560
+                    });
+                }
+            }
+            let scene = engine.observe(&frame);
+            let ids = scene.objects.iter().map(|o| o.id).collect::<Vec<_>>();
+            if t == 10 {
+                assert_eq!(ids.len(), if initially_separate { 2 } else { 1 });
+                initial_ids = ids.clone();
+            }
+            if t >= 12 {
+                assert_eq!(ids, initial_ids);
+                assert_eq!(
+                    scene
+                        .objects
+                        .iter()
+                        .map(|o| o.region.samples)
+                        .sum::<usize>(),
+                    108
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn one_invalid_native_column_preserves_established_surface_without_filling_pixels() {
+    let mut source = SyntheticSource::default();
+    let mut engine = Engine::default();
+    let mut id = None;
+    for t in 0..18 {
+        let mut frame = source.next_frame().unwrap().unwrap();
+        let w = frame.info.width;
+        frame.pixels.fill(3000);
+        if t >= 6 {
+            for row in frame.pixels.chunks_exact_mut(w).take(48).skip(12) {
+                row[16..64].fill(1400);
+                if t >= 12 {
+                    row[40] = 0;
+                }
+            }
+        }
+        let state = engine.observe(&frame);
+        if t == 10 {
+            id = Some(state.objects[0].id);
+        }
+        if t >= 12 {
+            assert_eq!(state.objects.len(), 1);
+            assert_eq!(Some(state.objects[0].id), id);
+            assert_eq!(state.objects[0].region.samples, 99);
+            assert_eq!(engine.quality[20 * w + 40], 1);
+        }
+    }
+}
+
+#[test]
+fn sparse_depth_changes_only_recruit_a_surface_with_foreground_boundaries() {
+    for surround in [1000, 3000] {
+        let mut source = SyntheticSource::default();
+        let mut engine = Engine::default();
+        for t in 0..10 {
+            let mut f = source.next_frame().unwrap().unwrap();
+            let w = f.info.width;
+            f.pixels.fill(surround);
+            for row in f.pixels.chunks_exact_mut(w).take(48).skip(12) {
+                row[24..72].fill(1800);
+                if t < 6 {
+                    row[32..40].fill(2600);
+                }
+            }
+            let scene = engine.observe(&f);
+            if t >= 8 {
+                if surround == 3000 {
+                    assert_eq!(scene.objects.len(), 1);
+                    assert_eq!(scene.objects[0].region.samples, 108);
+                } else {
+                    assert!(scene.objects.iter().all(|o| o.region.samples < 108));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn compact_foreground_at_vga_resolution_keeps_the_original_six_sample_sensitivity() {
+    let mut source = SyntheticSource::default();
+    let mut engine = Engine::default();
+    for t in 0..12 {
+        let mut frame = source.next_frame().unwrap().unwrap();
+        frame.info.width = 640;
+        frame.info.height = 480;
+        frame.info.intrinsics = xtion_vision::CameraIntrinsics::nominal(640, 480);
+        frame.pixels = vec![2800; 640 * 480];
+        if t >= 6 {
+            for row in frame
+                .pixels
+                .as_chunks_mut::<640>()
+                .0
+                .iter_mut()
+                .skip(200)
+                .take(12)
+            {
+                row[320..332].fill(1400);
+            }
+        }
+        let scene = engine.observe(&frame);
+        if t >= 8 {
+            assert_eq!(scene.objects.len(), 1);
+            assert_eq!(scene.objects[0].region.samples, 9);
+        }
+    }
+}
+
+#[test]
+fn a_compact_change_on_a_large_coplanar_surface_retains_only_measured_seeds() {
+    let mut source = SyntheticSource::default();
+    let mut engine = Engine::default();
+    for t in 0..12 {
+        let mut f = source.next_frame().unwrap().unwrap();
+        let w = f.info.width;
+        f.pixels.fill(1800);
+        if t < 6 {
+            for row in f.pixels.chunks_exact_mut(w).skip(16).take(12) {
+                row[32..44].fill(2800);
+            }
+        }
+        let scene = engine.observe(&f);
+        if t >= 8 {
+            assert_eq!(scene.objects.len(), 1);
+            assert_eq!(scene.objects[0].region.samples, 9);
+        }
+    }
+}
+
+#[test]
+fn sparse_unstable_depth_cannot_confirm_a_compact_track() {
+    let mut source = SyntheticSource::default();
+    let mut engine = Engine::default();
+    for t in 0..18 {
+        let mut f = source.next_frame().unwrap().unwrap();
+        let w = f.info.width;
+        // Both values remain close enough to grow into the surrounding plane.
+        // The local patch has a large foreground residual after warmup, but its
+        // alternating depths disagree by more than the temporal noise bound.
+        f.pixels.fill(if t % 2 == 0 { 1800 } else { 1850 });
+        if t < 6 {
+            for row in f.pixels.chunks_exact_mut(w).skip(16).take(12) {
+                row[32..44].fill(2800);
+            }
+        }
+        let scene = engine.observe(&f);
+        assert!(scene.objects.is_empty());
+    }
+}
+
+#[test]
+fn opposite_depth_order_on_the_two_sides_does_not_promote_a_background_strip() {
+    let mut source = SyntheticSource::default();
+    let mut engine = Engine::default();
+    for t in 0..12 {
+        let mut f = source.next_frame().unwrap().unwrap();
+        let w = f.info.width;
+        for row in f.pixels.chunks_exact_mut(w) {
+            row[..24].fill(3000);
+            row[24..72].fill(1800);
+            row[72..].fill(1000);
+        }
+        if t < 6 {
+            for row in f.pixels.chunks_exact_mut(w).skip(16).take(12) {
+                row[32..44].fill(2800);
+            }
+        }
+        let scene = engine.observe(&f);
+        assert!(scene.objects.iter().all(|o| o.region.samples <= 9));
+    }
+}
+
+#[test]
+fn established_foreground_keeps_its_measured_extent_when_it_meets_a_static_surface() {
+    let mut source = SyntheticSource::default();
+    let mut engine = Engine::default();
+    let mut initial = None;
+    for t in 0..16 {
+        let mut f = source.next_frame().unwrap().unwrap();
+        let w = f.info.width;
+        f.pixels.fill(3000);
+        for row in f.pixels.chunks_exact_mut(w) {
+            row[..40].fill(1800);
+        }
+        if t >= 6 {
+            let x = if t < 12 { 44 } else { 40 };
+            for row in f.pixels.chunks_exact_mut(w).skip(16).take(20) {
+                row[x..x + 24].fill(1800);
+            }
+        }
+        let scene = engine.observe(&f);
+        if t == 10 {
+            initial = Some(scene.objects[0].id);
+        }
+        if t >= 12 {
+            assert_eq!(scene.objects.len(), 1);
+            assert_eq!(Some(scene.objects[0].id), initial);
+            assert_eq!(scene.objects[0].region.samples, 30);
+        }
+    }
+}
