@@ -17,3 +17,15 @@ Select Depth, 3D points or Split in the sidebar. Drag to orbit, secondary-drag t
 ## Dependencies of later phases
 
 The tracker and physical-floor estimation depend on segmentation. Three reopened attempts failed the joint replay gate. Region and motion colouring, estimated floor pose, tracked boxes, mesh, measurement UI, further exports and AI geometry updates remain pending. The existing AI, depth view, recording, replay and ASCII cloud export stay available. The package remains at version 0.1 during this partial implementation.
+
+## Version 0.2 surface path
+
+**Surface** and **Surface in split view** use a latest-only reconstruction worker. Source vertices are projected once per virtual-camera update. The CPU path paints projected triangles into an RGB texture; the glow path submits indexed egui mesh geometry. Both order faces by view depth. Strong self-overlap or intersecting projected triangles can therefore give an imperfect visibility order. Picking follows that same draw order.
+
+The repeatable surface check creates a synthetic plane with a hole, launches each path and checks three interior screen locations. On a Wayland desktop, unset WAYLAND_DISPLAY inside the Xvfb test so screenshot and simulated pointer tools use the same X server as the viewer.
+
+```sh
+env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET xvfb-run -a python3 scripts/check_surface_view.py /tmp/xtion-surface-check
+```
+
+The public benchmark flag writes stage rates, source health and the active draw interval. Compare draws against both that interval and total session duration when compositor visibility changes. See the [version 0.2 validation](v0.2-release.md).

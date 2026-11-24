@@ -60,3 +60,5 @@ The locked offline workspace suite passed 64 tests (nine opt-in tests skipped), 
 The [repositioned-sensor retest](repositioned-retest.md) compares both segmentation implementations on a new occupied scene and a confirmed empty scene. It also records a desktop shutdown defect, the correction and live signal/reopen tests.
 
 The [release recheck](release-recheck.md) compares three additional segmentation variants. It identifies the exact short-passage frames with lost foreground coverage and reports separate offline and hardware results.
+
+The [0.2 release validation](v0.2-release.md) supersedes the earlier release decisions. It includes the passing short-passage comparison, held-out checks, geometry readback and live results.

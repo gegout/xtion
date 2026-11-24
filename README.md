@@ -8,6 +8,28 @@ is installed or required.
 
 The workspace builds two applications. **xtion** probes, captures, diagnoses and stress-tests the USB sensor. **xtion-vision** watches visible depth surfaces, measures how they move, and describes the scene locally. Its desktop and JSON-lines interfaces consume the same perception engine. A configured vision endpoint can add shape hypotheses with evidence IDs.
 
+## Spatial Vision 0.2
+
+Xtion Vision turns a fixed depth camera into an interactive view of the visible surfaces in front of it. It estimates where foreground regions move in camera coordinates. Raw depths, region identity, and inferred scene labels remain accessible independently. The desktop, recorder, geometry tools and local descriptions work offline.
+
+```sh
+cargo build --workspace --release --locked
+target/release/xtion-vision --version
+target/release/xtion-vision --view surface --capture-fps 30
+target/release/xtion-vision --view split --replay recording.xtv
+target/release/xtion-vision --headless --fast --replay recording.xtv --export new-snapshot
+target/release/xtion-vision --view surface --replay recording.xtv --seconds 30 --benchmark new-benchmark.json
+```
+
+* **Inspect a scene.** Switch between Depth, 3D points, Surface and Split. In Split, enable **Surface in split view** to see depth and triangles together. Drag to orbit, secondary-drag to pan, and scroll to zoom. Surface controls include wireframe, vertices, border erosion and display sampling. Adaptive density changes display sampling under load. Export uses the selected base resolution.
+* **Tune segmentation.** Copy `vision/config/spatial-noise.json` and pass `--noise-config your-model.json` to change the measurement range, noise coefficients and threshold multipliers. The default is a conservative model. In 3D Points, choose region ID, motion intensity or depth quality to inspect tracking.
+* **Measure.** Open **Measure and inspect**. Click two visible points in either view to see distance, XYZ separation and uncertainty in mm, cm or m. Picks follow the original pixels as the scene changes. **Freeze frame** pins the frame and tracks while the sensor continues acquiring. The inspector shows visible extent, recent trajectory length, velocity and quality for a selected region.
+* **Interpret geometry.** Camera X points right, Y down and Z forward, in metres. Xtion's nominal field-of-view intrinsics make lateral measurements approximate. Zero depth is missing. The optional floor estimate comes from a connected planar surface below the camera; a tabletop may qualify. Check the estimate before applying it or enter the mount height and tilt manually.
+* **Export.** Choose a new folder in **Export snapshot**, or use the headless command above for the first frame. The bundle includes ASCII and little-endian binary point PLYs, surface PLY and OBJ, trajectories in CSV and JSON, a depth PNG, and scene JSON with source clocks, optics, pose and units. Geometry uses the raw metric frame. **Save window PNG** captures the displayed 2D or 3D view. XTV v1 recordings remain compatible.
+* **Build a consumer.** Use `DepthFrame::organised_cloud` for source-pixel lookup, `SurfaceMesh::update` for reconstruction and `measurement::measure` for raw-depth measurements. These library interfaces build without desktop or AI features. The optional AI receives bounded spatial observations with evidence IDs and calibration provenance. Personal recordings and credentials stay outside the repository.
+
+See the [spatial architecture](docs/spatial/v0.2-architecture.md) and [release validation](docs/spatial/v0.2-release.md).
+
 ## Run Xtion Vision
 
 Use Ubuntu with a Rust toolchain compatible with the locked dependencies (tested with Rust 1.99), a C toolchain, and Mesa software OpenGL for the desktop. The USB permissions below apply to live acquisition. Replay and synthetic scenes work without a sensor.
@@ -233,7 +255,7 @@ Ordinary workspace tests run without sensor access. With the sensor exclusively 
 
 ### Spatial Vision development
 
-The 0.2 sensor baseline and three segmentation experiments are documented in the [spatial validation report](docs/spatial/validation.md). The desktop application on main uses the 0.1 pipeline. To reproduce the comparisons, run the release replay example on a local XTV recording:
+The 0.2 sensor baseline and three segmentation experiments are documented in the [spatial validation report](docs/spatial/validation.md). Vision 0.2 builds on those experiments. The [0.2 release validation](docs/spatial/v0.2-release.md) records the selected tracker and its performance. To reproduce the comparisons, run the release replay example on a local XTV recording:
 
 ```sh
 cargo run --release -p xtion-vision --example spatial_baseline -- recording.xtv
@@ -248,4 +270,4 @@ target/release/xtion-vision --view points --point-renderer cpu --replay session.
 target/release/xtion-vision --synthetic --view points --png points.png --seconds 3
 ```
 
-Select **Depth**, **3D points** or **Split** while capture is running. Drag to orbit, secondary-drag to pan and scroll to zoom. The grid spacing is half a metre. Depth holes remain visible, and only sensor-facing surfaces have geometry. See the [rendering decision and controls](docs/spatial/rendering.md) and [spatial validation report](docs/spatial/validation.md).
+Select **Depth**, **3D points**, **Surface** or **Split** while capture is running. Drag to orbit, secondary-drag to pan and scroll to zoom. The grid spacing is half a metre. Depth holes remain visible, and only sensor-facing surfaces have geometry. See the [rendering decision and controls](docs/spatial/rendering.md) and [spatial validation report](docs/spatial/validation.md).
