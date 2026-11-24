@@ -1,0 +1,7 @@
+{
+  "source": "conservative_default",
+  "a_mm": 3.0,
+  "b_mm_per_m2": 1.4,
+  "min_range_mm": 800,
+  "max_range_mm": 3500
+}
