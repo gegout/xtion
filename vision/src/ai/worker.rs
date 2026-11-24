@@ -1,4 +1,5 @@
 //! Optional Chat Completions worker. A watch channel keeps only the newest pending observation.
+use super::history::{Finding, History};
 use super::{Claim, Config, Report};
 use crate::{DepthFrame, image, perception::SceneState, source::Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -35,7 +36,218 @@ pub fn signature(s: &SceneState) -> String {
             .collect::<Vec<_>>()
     )
 }
-type Job = (Arc<SceneState>, Arc<DepthFrame>);
+#[derive(Clone, Debug)]
+pub(super) enum Fact {
+    Passage {
+        event: String,
+        track: u64,
+        evidence: crate::trajectory::Passage,
+    },
+    Upright {
+        track: u64,
+        id: String,
+        width: f64,
+        height: f64,
+        z: f64,
+        sector: usize,
+    },
+    Historical(Finding),
+    PastEvent {
+        event: String,
+        text: String,
+        ids: Vec<String>,
+    },
+    Coverage(f64, &'static str),
+    Layout([f64; 3]),
+    Sector(usize, f64),
+    Region(u64, f64, bool, &'static str, usize, usize),
+}
+/// Select complete, grounded sentences before publishing to either consumer.
+fn narrative(report: &Report, scene: &SceneState, min: usize, max: usize) -> String {
+    let mut text = String::new();
+    let mut count = 0;
+    let mut append = |sentence: &str| {
+        let n = sentence.split_whitespace().count();
+        if n > 0 && count + n <= max && !text.contains(sentence) {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(sentence);
+            count += n;
+        }
+        count >= min
+    };
+    // A period followed by whitespace is a sentence boundary; decimal metres stay intact.
+    for sentence in report.text.split_inclusive(". ") {
+        if append(sentence.trim()) {
+            return text;
+        }
+    }
+    if let Some(Evidence {
+        fact: Fact::Passage { evidence, .. },
+        ..
+    }) = &report.evidence
+        && append(&format!(
+            "The movement lasted {:.1} seconds, during which the camera recorded the same track in {} separate observations.",
+            (evidence.end_ns - evidence.start_ns) as f64 / 1e9,
+            evidence.samples
+        ))
+    {
+        return text;
+    }
+    let coverage = (scene.valid_fraction * 100.).round();
+    let regions = match scene.objects.len() {
+        0 => "No foreground tracks were active.".into(),
+        1 => "One foreground track was active.".into(),
+        n => format!("{n} foreground tracks were active."),
+    };
+    if !matches!(
+        report.evidence.as_ref().map(|e| &e.fact),
+        Some(Fact::Coverage(..))
+    ) && append(&format!("Valid depth covered {coverage:.0}% of the view."))
+    {
+        return text;
+    }
+    for detail in [
+        regions,
+        format!("Capture status was {}.", scene.status),
+        format!(
+            "The observation time was {:.1} seconds.",
+            scene.ns as f64 / 1e9
+        ),
+    ] {
+        if append(&detail) {
+            return text;
+        }
+    }
+    for (side, depth) in ["left", "central", "right"]
+        .into_iter()
+        .zip(scene.sector_z_m)
+    {
+        if let Some(z) = depth
+            && append(&format!("The {side} median was {z:.2} metres."))
+        {
+            return text;
+        }
+    }
+    for detail in [
+        format!("USB errors recorded: {}.", scene.health.errors),
+        format!("Recorded sequence gaps: {}.", scene.health.gaps),
+        format!("Recorded incomplete frames: {}.", scene.health.incomplete),
+        format!("Recorded queue drops: {}.", scene.health.queue_drops),
+        "Distances use the camera optical frame.".into(),
+    ] {
+        if append(&detail) {
+            break;
+        }
+    }
+    text
+}
+fn horizontal_third(x: f64, width: usize) -> usize {
+    ((x * 3.0 / width.max(1) as f64) as usize).min(2)
+}
+impl Fact {
+    fn text(&self) -> String {
+        match *self {
+            Self::PastEvent { ref text, .. } => text.clone(),
+            Self::Historical(ref f) => f.text.clone(),
+            Self::Passage { ref evidence, .. } => {
+                format!("A foreground shape {}.", evidence.movement())
+            }
+            Self::Upright { sector, .. } => format!(
+                "An upright foreground shape is in the {} third of the scene.",
+                ["left", "centre", "right"][sector]
+            ),
+            Self::Coverage(v, "insufficient depth coverage") => format!(
+                "There is insufficient depth coverage to follow movement. Only {:.0}% of the view returned a reading, so a missing track cannot establish that anything left.",
+                v * 100.
+            ),
+            Self::Coverage(v, status) => format!(
+                "{}; valid depth covers {:.0}% of the view.",
+                if status == "tracking" {
+                    "Tracking is active"
+                } else {
+                    status
+                },
+                v * 100.
+            ),
+            Self::Layout(z) => format!(
+                "Median surface depth measures {:.2} m left, {:.2} m centre and {:.2} m right.",
+                z[0], z[1], z[2]
+            ),
+            Self::Sector(i, z) => format!(
+                "The {} third has a median surface depth of {z:.2} m.",
+                ["left", "centre", "right"][i]
+            ),
+            Self::Region(_, z, moving, direction, sector, _) => {
+                let activity = match (moving, direction) {
+                    (false, _) => "stationary",
+                    (true, "approaching") => "approaching the sensor",
+                    (true, "receding") => "moving away from the sensor",
+                    _ => "moving with little change in depth",
+                };
+                format!(
+                    "A foreground shape in the {} third of the view is {activity}, about {z:.1} metres in front of the camera.",
+                    ["left", "centre", "right"][sector]
+                )
+            }
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub(super) struct Evidence {
+    status: &'static str,
+    optics: crate::IntrinsicsSource,
+    sectors: [Option<f64>; 3],
+    fact: Fact,
+}
+impl Evidence {
+    fn still_valid(&self, s: &SceneState) -> bool {
+        if let Fact::Passage {
+            event, evidence, ..
+        } = &self.fact
+        {
+            return s.ns.saturating_sub(evidence.end_ns) <= 12_000_000_000
+                && s.status == "tracking"
+                && s.events.iter().any(|e| e.id == *event);
+        }
+        let close = |a: Option<f64>, b: Option<f64>| match (a, b) {
+            (Some(x), Some(y)) => (x - y).abs() <= 0.25,
+            (None, None) => true,
+            _ => false,
+        };
+        self.status == s.status
+            && self.optics == s.optics
+            && self
+                .sectors
+                .into_iter()
+                .zip(s.sector_z_m)
+                .all(|(a, b)| close(a, b))
+            && match self.fact {
+                Fact::Passage { .. } => false,
+                Fact::Upright { track, z, .. } => s.objects.iter().any(|o| {
+                    o.id == track
+                        && (o.region.z - z).abs() < 0.20
+                        && crate::trajectory::upright_extent(&o.region).is_some()
+                }),
+                Fact::PastEvent { .. } | Fact::Historical(_) => false, // Historical observations are checked against the capture clock in latest().
+                Fact::Layout(depths) => depths
+                    .into_iter()
+                    .zip(s.sector_z_m)
+                    .all(|(a, b)| b.is_some_and(|v| (a - v).abs() <= 0.10)),
+                Fact::Coverage(v, _) => (s.valid_fraction - v).abs() < 0.03,
+                Fact::Sector(i, z) => s.sector_z_m[i].is_some_and(|v| (v - z).abs() <= 0.10),
+                Fact::Region(id, z, m, d, sector, width) => s.objects.iter().any(|o| {
+                    o.id == id
+                        && horizontal_third(o.region.center[0], width) == sector
+                        && o.moving == m
+                        && o.direction == d
+                        && (o.region.z - z).abs() <= 0.10
+                }),
+            }
+    }
+}
+type Job = (Arc<SceneState>, Arc<DepthFrame>, Duration, History);
 pub struct Interpreter {
     tx: Option<watch::Sender<Option<Job>>>,
     cancel: watch::Sender<bool>,
@@ -44,6 +256,8 @@ pub struct Interpreter {
     last: String,
     last_at: Instant,
     event: String,
+    history: History,
+    last_context_ns: u64,
 }
 impl Interpreter {
     pub fn start(config: Config) -> Result<Self> {
@@ -56,6 +270,7 @@ impl Interpreter {
         {
             return Err("invalid AI endpoint URL".into());
         }
+        config.validate_words()?;
         if config.timeout.is_zero()
             || config.budget.is_zero()
             || config.candidates == 0
@@ -86,22 +301,28 @@ impl Interpreter {
                         model: None,
                         level: 0,
                         failures: 0,
-                        key: std::env::var("OPENAI_API_KEY").ok(),
+                        measurements_only: false,
+                        history: History::default(),
                         previous: None,
                     };
+                    let mut next_start = Instant::now();
                     while rx.changed().await.is_ok() {
-                        let Some((s, f)) = rx.borrow_and_update().clone() else {
+                        tokio::time::sleep_until(next_start.into()).await;
+                        let Some((s, f, refresh, history)) = rx.borrow_and_update().clone() else {
                             continue;
                         };
+                        api.history = history;
                         let sig = signature(&s);
                         let now = Instant::now();
+                        next_start = now + refresh;
                         let mut report = match api.interpret(&s, &f).await {
-                            Ok(r) => {
+                            Ok(mut r) => {
+                                r.text = narrative(&r, &s, api.c.min_words, api.c.max_words);
                                 api.failures = 0;
                                 r
                             }
                             Err(e) => {
-                                api.failures += 1;
+                                api.failures = api.failures.saturating_add(1);
                                 if api.failures >= 2 {
                                     api.model = None;
                                     api.level = 0;
@@ -131,30 +352,70 @@ impl Interpreter {
             last: String::new(),
             last_at: Instant::now(),
             event: String::new(),
+            history: History::default(),
+            last_context_ns: 0,
         })
     }
+    pub fn reconfigure(&mut self, config: Config) -> Result<()> {
+        let mut next = Self::start(config)?;
+        next.history = std::mem::take(&mut self.history);
+        *self = next;
+        Ok(())
+    }
+
     pub fn submit(&mut self, s: Arc<SceneState>, f: Arc<DepthFrame>, refresh: Duration) {
         let sig = signature(&s);
+        let sampled = self.history.observe(&s, f.info.width);
+        let context_due = sampled && s.ns.abs_diff(self.last_context_ns) >= 7_000_000_000;
         let event = s.events.last().map(|e| e.id.clone()).unwrap_or_default();
         let result = self.result.lock().unwrap();
         let retry = !result.success
             && result.signature == sig
             && self.last_at.elapsed() >= refresh.max(Duration::from_millis(100));
         drop(result);
-        if self.last.is_empty()
-            || self.event != event
-            || (self.last != sig && self.last_at.elapsed() >= refresh)
-            || retry
-        {
+        if self.last.is_empty() || self.event != event || self.last != sig || retry || context_due {
+            self.last_context_ns = s.ns;
             self.last = sig;
             self.event = event;
             self.last_at = Instant::now();
-            self.tx.as_ref().unwrap().send_replace(Some((s, f)));
+            self.tx
+                .as_ref()
+                .unwrap()
+                .send_replace(Some((s, f, refresh, self.history.clone())));
         }
+    }
+    pub fn status(&self) -> String {
+        let r = self.result.lock().unwrap();
+        if r.scene_id.is_empty() {
+            return "Waiting for the first model analysis…".into();
+        }
+        if !r.success {
+            return format!("Model request failed: {}", r.text);
+        }
+        format!(
+            "Last analysis: {} · {:.1} s",
+            r.scene_id,
+            r.latency_ms as f64 / 1000.
+        )
     }
     pub fn latest(&self, s: &SceneState) -> Option<Report> {
         let r = self.result.lock().unwrap();
-        (r.signature == signature(s)).then(|| r.clone())
+        // A completed sequence is explicitly narrated in the past tense and attributed
+        // to its capture time. A later change cannot invalidate that historical observation.
+        let current = if r
+            .evidence
+            .as_ref()
+            .is_some_and(|e| matches!(e.fact, Fact::PastEvent { .. } | Fact::Historical(_)))
+        {
+            s.ns.checked_sub(r.arrival_ns)
+                .is_some_and(|age| age <= 30_000_000_000)
+                && s.status == "tracking"
+        } else if let Some(e) = &r.evidence {
+            e.still_valid(s)
+        } else {
+            r.signature == signature(s)
+        };
+        current.then(|| r.clone())
     }
 }
 impl Drop for Interpreter {
@@ -173,7 +434,8 @@ struct Api {
     model: Option<String>,
     level: u8,
     failures: u8,
-    key: Option<String>,
+    measurements_only: bool,
+    history: History,
     previous: Option<(String, Value, Value)>,
 }
 fn image_part(data: Vec<u8>) -> Value {
@@ -182,31 +444,110 @@ fn image_part(data: Vec<u8>) -> Value {
 impl Api {
     async fn call(&self, path: &str, body: Option<Value>) -> Result<(StatusCode, Value)> {
         let url = format!("{}/{}", self.c.url.trim_end_matches('/'), path);
+        let redact = |s: String| match self.c.api_key.as_deref().filter(|k| !k.is_empty()) {
+            Some(key) => s.replace(key, "[redacted]"),
+            None => s,
+        };
+        let mut exchange = self.c.transcript.as_ref().map(|log| {
+            let mut texts = Vec::new();
+            if let Some(b) = body.as_ref() {
+                if let Some(messages) = b["messages"].as_array() {
+                    for message in messages {
+                        if let Some(s) = message["content"].as_str() {
+                            texts.push(s);
+                        } else if let Some(parts) = message["content"].as_array() {
+                            texts.extend(parts.iter().filter_map(|p| p["text"].as_str()));
+                        }
+                    }
+                } else if let Some(parts) = b["input"].as_array() {
+                    texts.extend(parts.iter().filter_map(|p| p["text"].as_str()));
+                }
+            }
+            let method = if body.is_some() { "POST" } else { "GET" };
+            let model = body
+                .as_ref()
+                .and_then(|b| b["model"].as_str())
+                .unwrap_or("discovery");
+            log.begin(
+                redact(format!("{model}   ·   {method} {url}")),
+                redact(texts.join("\n\n")),
+                redact(
+                    body.as_ref()
+                        .map(|b| serde_json::to_string_pretty(b).unwrap())
+                        .unwrap_or_default(),
+                ),
+            )
+        });
         let mut r = if let Some(b) = body {
             self.client.post(url).json(&b)
         } else {
             self.client.get(url)
         };
-        if let Some(key) = &self.key {
-            r = r.bearer_auth(key)
+        if let Some(key) = self.c.api_key.as_deref().filter(|k| !k.is_empty()) {
+            r = r.bearer_auth(key);
         }
-        let mut response = r.send().await.map_err(|e| {
-            if e.is_timeout() {
-                "AI request timed out"
-            } else {
-                "AI endpoint unreachable"
+        let received: Result<_> = async {
+            let mut response = r.send().await.map_err(|e| {
+                if e.is_timeout() {
+                    "AI request timed out"
+                } else {
+                    "AI endpoint unreachable"
+                }
+            })?;
+            let status = response.status();
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|_| "AI response interrupted")?
+            {
+                if bytes.len() + chunk.len() > 1_048_576 {
+                    return Err("oversized AI response".into());
+                }
+                bytes.extend_from_slice(&chunk);
             }
-        })?;
-        let status = response.status();
+            Ok((status, bytes))
+        }
+        .await;
+        let (status, bytes) = match received {
+            Ok(data) => data,
+            Err(e) => {
+                if let Some(entry) = &mut exchange {
+                    entry.finish(&e.to_string(), None, None);
+                }
+                return Err(e);
+            }
+        };
+        if let Some(entry) = &mut exchange {
+            let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            let answer = value["choices"][0]["message"]["content"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| {
+                    value["output"].as_array().map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|i| i["content"].as_array())
+                            .flatten()
+                            .filter_map(|p| p["text"].as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                });
+            entry.finish(
+                &format!("HTTP {status}"),
+                Some(redact(String::from_utf8_lossy(&bytes).into_owned())),
+                answer.map(redact),
+            );
+        }
+        if status == StatusCode::UNAUTHORIZED {
+            return Err("HTTP 401: enter a valid API key in Model connection and refresh, or set OPENAI_API_KEY before launch".into());
+        }
         if !status.is_success() {
-            return Ok((status, Value::Null));
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            if bytes.len() + chunk.len() > 1_048_576 {
-                return Err("oversized AI response".into());
-            }
-            bytes.extend_from_slice(&chunk)
+            return Ok((
+                status,
+                serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            ));
         }
         Ok((status, serde_json::from_slice(&bytes)?))
     }
@@ -332,15 +673,341 @@ impl Api {
 
         Ok(true)
     }
+    async fn semantic_report(
+        &mut self,
+        s: &SceneState,
+        width_from_frame: usize,
+        fact: Fact,
+    ) -> Result<Report> {
+        let (observation, ids, action, body) = match &fact {
+            Fact::Passage {
+                event,
+                track,
+                evidence: p,
+            } => (
+                json!({"track":track,"first_x":p.start_x,"last_x":p.end_x,"duration_s":(p.end_ns-p.start_ns) as f64/1e9,"consistent_samples":p.samples,"upright_width_height_m":p.upright_extent_m}),
+                vec![event.clone(), p.start_id.clone(), p.end_id.clone()],
+                p.movement(),
+                p.upright_extent_m.is_some(),
+            ),
+            Fact::Upright {
+                track,
+                id,
+                width,
+                height,
+                z,
+                sector,
+            } => (
+                json!({"track":track,"upright_width_height_m":[width,height],"forward_m":z,"image_third":(["left","centre","right"][*sector])}),
+                vec![id.clone()],
+                "is present",
+                true,
+            ),
+            _ => return Err("missing semantic evidence".into()),
+        };
+        let prompt = format!(
+            "Describe this depth-camera observation. Infer whether the subject could be a person from an upright human-sized silhouette. Use possible person when the supplied upright dimensions fit a human silhouette. This is a shape hypothesis; a tall object may look similar. Choose unknown shape when size evidence is absent. Camera x increases from 0 at left to 1 at right. Infer motion from ordered positions of the same track. Left-to-right or right-to-left means traversing both outer thirds; otherwise use rightward or leftward. Without a trajectory use is present. Do not infer identity, intention or colour. The measured action is {action}. Use this action exactly. Return JSON fields subject and action. Evidence: {observation}"
+        );
+        let subjects = if body {
+            vec!["possible person", "unknown shape"]
+        } else {
+            vec!["unknown shape"]
+        };
+        let schema = json!({"type":"object","properties":{"subject":{"type":"string","enum":subjects},"action":{"type":"string","enum":[action]}},"required":["subject","action"],"additionalProperties":false});
+        let mut tries = 0;
+        loop {
+            let mut request = json!({"model":self.model,"messages":[{"role":"user","content":format!("{prompt} Context: {}. Allowed values: {schema}",self.history.prompt(s))}],"temperature":0,"max_tokens":self.c.tokens.min(80)});
+            if self.level == 0 {
+                request["response_format"] = json!({"type":"json_schema","json_schema":{"name":"semantic_observation","schema":schema,"strict":true}})
+            } else if self.level == 1 {
+                request["response_format"] = json!({"type":"json_object"})
+            }
+            let (status, v) = self.call("chat/completions", Some(request)).await?;
+            if [400, 422].contains(&status.as_u16()) && self.level < 2 {
+                self.level += 1;
+                continue;
+            }
+            if !status.is_success() {
+                return Err(format!("Semantic request returned HTTP {status}").into());
+            }
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Interpretation {
+                subject: String,
+                action: String,
+            }
+            let raw = v["choices"][0]["message"]["content"].as_str().unwrap_or("");
+            if let Ok(answer) = serde_json::from_str::<Interpretation>(raw.trim())
+                && subjects.contains(&answer.subject.as_str())
+                && answer.action == action
+            {
+                let noun = if answer.subject == "possible person" {
+                    "A person-like figure"
+                } else {
+                    "A foreground shape"
+                };
+                let mut text = match &fact {
+                    Fact::Upright { sector, .. } => format!(
+                        "{noun} is visible in the {} third of the scene.",
+                        ["left", "centre", "right"][*sector]
+                    ),
+                    _ => format!("{noun} {action}."),
+                };
+                let mut ids = ids;
+                let mut history_key = Some(format!("{}-{action}-{noun}", ids[0]));
+                if let Fact::Upright { track, .. } = &fact {
+                    history_key = Some(format!("upright-{track}-{noun}"));
+                    if let Some(t) = self
+                        .history
+                        .findings(s, width_from_frame)
+                        .into_iter()
+                        .find(|f| f.track == *track)
+                    {
+                        text = t.text.replacen("A foreground shape", noun, 1).replacen(
+                            "A moving shape",
+                            &format!("{noun} that had been moving"),
+                            1,
+                        );
+                        ids.extend(t.ids);
+                        history_key = Some(format!("{}-{noun}", t.key));
+                    }
+                }
+                return Ok(Report {
+                    success: true,
+                    text,
+                    supporting_ids: ids,
+                    history_key,
+                    usage: v["usage"].clone(),
+                    evidence: Some(Evidence {
+                        status: s.status,
+                        optics: s.optics,
+                        sectors: s.sector_z_m,
+                        fact,
+                    }),
+                    ..Default::default()
+                });
+            }
+            tries += 1;
+            if tries >= 2 {
+                return Err("Semantic reply did not match the observed shape or trajectory".into());
+            }
+        }
+    }
+    /// Text-only endpoints rank measured observations. The displayed fact is
+    /// rendered locally, so the model cannot invent geometry or visual labels.
+    async fn measurements(&mut self, s: &SceneState, width: usize) -> Result<Report> {
+        if s.status == "tracking" {
+            if let Some((event, track, p)) = s
+                .events
+                .iter()
+                .rev()
+                .find_map(|e| Some((e, e.object?, e.passage.as_ref()?)))
+                .filter(|(_, _, p)| s.ns.saturating_sub(p.end_ns) <= 10_000_000_000)
+            {
+                return self
+                    .semantic_report(
+                        s,
+                        width,
+                        Fact::Passage {
+                            event: event.id.clone(),
+                            track,
+                            evidence: p.clone(),
+                        },
+                    )
+                    .await;
+            }
+            if let Some((o, [w, h])) = s
+                .objects
+                .iter()
+                .filter_map(|o| Some((o, crate::trajectory::upright_extent(&o.region)?)))
+                .max_by_key(|(o, _)| o.region.samples)
+            {
+                return self
+                    .semantic_report(
+                        s,
+                        width,
+                        Fact::Upright {
+                            track: o.id,
+                            id: o.observation_id.clone(),
+                            width: w,
+                            height: h,
+                            z: o.region.z,
+                            sector: horizontal_third(o.region.center[0], width),
+                        },
+                    )
+                    .await;
+            }
+        }
+        let mut facts = vec![Fact::Coverage(s.valid_fraction, s.status)];
+        if s.status == "tracking" {
+            for (i, z) in s.sector_z_m.into_iter().enumerate() {
+                if let Some(z) = z {
+                    facts.push(Fact::Sector(i, z))
+                }
+            }
+            if let [Some(l), Some(c), Some(r)] = s.sector_z_m {
+                facts.push(Fact::Layout([l, c, r]));
+            }
+            let mut regions: Vec<_> = s.objects.iter().collect();
+            regions.sort_by_key(|o| (!o.moving, std::cmp::Reverse(o.region.samples)));
+            for o in regions.into_iter().take(8) {
+                facts.push(Fact::Region(
+                    o.id,
+                    o.region.z,
+                    o.moving,
+                    o.direction,
+                    horizontal_third(o.region.center[0], width),
+                    width,
+                ));
+            }
+        }
+        let trends = self.history.findings(s, width);
+        let trends_absent = trends.is_empty();
+        if !trends_absent {
+            facts = trends.into_iter().map(Fact::Historical).collect();
+            facts.sort_by_key(|f| matches!(f,Fact::Historical(t) if t.key.contains("-still-")));
+        }
+        if s.status == "tracking"
+            && let Some(end) =
+                s.events.iter().rev().find(|e| {
+                    e.kind == "disappeared" && s.ns.saturating_sub(e.ns) <= 30_000_000_000
+                })
+            && let Some(id) = end.object
+            && !s.objects.iter().any(|o| o.id == id)
+            && let Some(before) = s.events.iter().rev().find(|e| {
+                e.object == Some(id)
+                    && e.ns < end.ns
+                    && s.ns.saturating_sub(e.ns) <= 30_000_000_000
+                    && (e.passage.is_some() || e.kind == "appeared")
+            })
+        {
+            let action = before
+                .passage
+                .as_ref()
+                .map(|p| p.movement())
+                .unwrap_or("appeared in the foreground");
+            let text = format!(
+                "A shape {action} before the camera lost track of it. The depth readings alone cannot tell whether it left the scene or became obscured."
+            );
+            facts.insert(
+                usize::from(!facts.is_empty() && matches!(facts[0], Fact::Historical(_))),
+                Fact::PastEvent {
+                    event: end.id.clone(),
+                    text,
+                    ids: vec![before.id.clone(), end.id.clone()],
+                },
+            );
+        }
+        if trends_absent && let Some((key, text)) = self.history.tracking_pattern(s) {
+            facts.insert(
+                0,
+                Fact::PastEvent {
+                    event: key,
+                    text,
+                    ids: vec![s.id.clone()],
+                },
+            );
+        }
+        // Keep the model focused when the camera measures a motion transition.
+        if facts
+            .iter()
+            .any(|f| matches!(f, Fact::Region(_, _, true, _, _, _)))
+        {
+            facts.retain(|f| {
+                matches!(
+                    f,
+                    Fact::Region(_, _, true, _, _, _) | Fact::PastEvent { .. }
+                )
+            });
+        } else if s.status == "tracking"
+            && s.objects.is_empty()
+            && facts.iter().any(|f| matches!(f, Fact::Layout(_)))
+        {
+            facts.retain(|f| matches!(f, Fact::Layout(_) | Fact::PastEvent { .. }));
+        }
+        let numbered = facts
+            .iter()
+            .enumerate()
+            .map(|(i, f)| format!("{i}: {}", f.text()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt = format!(
+            "You narrate a fixed ASUS Xtion depth camera for someone who cannot see the display. You receive measurements only. Left and right are from the camera; Z is forward distance in metres. A region is a tracked patch of depth, with unknown identity. Zero means missing. Never infer a person, colour or activity from appearance. If tracking is impaired, report coverage and withhold motion claims. Otherwise prioritize a moving region and its direction; next prefer a stationary foreground region; for an empty foreground describe the left/centre/right depth layout. Choose the one candidate that best explains meaningful change over time. Prefer a motion transition to a steady region. Return only JSON with its integer index.\n{}\nCandidates:\n{numbered}",
+            self.history.prompt(s)
+        );
+        let mut attempts = 0;
+        loop {
+            let mut body = json!({"model":self.model,"messages":[{"role":"user","content":prompt}],"temperature":0,"max_tokens":self.c.tokens.min(48)});
+            if self.level == 0 {
+                body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"depth_fact","strict":true,"schema":{"type":"object","properties":{"index":{"type":"integer","enum":(0..facts.len()).collect::<Vec<_>>()}},"required":["index"],"additionalProperties":false}}})
+            } else if self.level == 1 {
+                body["response_format"] = json!({"type":"json_object"})
+            }
+            let (status, v) = self.call("chat/completions", Some(body)).await?;
+            if [400, 422].contains(&status.as_u16()) && self.level < 2 {
+                self.level += 1;
+                continue;
+            }
+            if !status.is_success() {
+                return Err(format!("AI measurement request returned HTTP {status}").into());
+            }
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Choice {
+                index: usize,
+            }
+            let raw = v["choices"][0]["message"]["content"].as_str().unwrap_or("");
+            let choice = raw
+                .find('{')
+                .zip(raw.rfind('}'))
+                .and_then(|(a, b)| raw.get(a..=b))
+                .and_then(|text| serde_json::from_str::<Choice>(text).ok());
+            if let Some(fact) = choice.and_then(|c| facts.get(c.index)) {
+                return Ok(Report {
+                    success: true,
+                    text: fact.text(),
+                    supporting_ids: match fact {
+                        Fact::PastEvent { ids, .. } => ids.clone(),
+                        Fact::Historical(f) => f.ids.clone(),
+                        _ => vec![s.id.clone()],
+                    },
+                    history_key: match fact {
+                        Fact::PastEvent { event, .. } => Some(event.clone()),
+                        Fact::Historical(f) => Some(f.key.clone()),
+                        Fact::Region(id, _, false, _, sector, _) => {
+                            Some(format!("snapshot-{id}-still-{sector}"))
+                        }
+                        _ => None,
+                    },
+                    evidence: Some(Evidence {
+                        status: s.status,
+                        optics: s.optics,
+                        sectors: s.sector_z_m,
+                        fact: fact.clone(),
+                    }),
+                    usage: v["usage"].clone(),
+                    ..Default::default()
+                });
+            }
+            attempts += 1;
+            if attempts >= 2 {
+                return Err("AI did not select a valid measured fact".into());
+            }
+        }
+    }
     async fn interpret(&mut self, s: &SceneState, f: &DepthFrame) -> Result<Report> {
         if self.model.is_none() {
             self.model = Some(self.select().await?);
+        }
+        if self.measurements_only {
+            return self.measurements(s, f.info.width).await;
         }
         let (w, h, rgb) = image::rgb(f, 224, 4000);
         let img = image_part(image::png(w, h, &rgb)?);
         let schema = schema();
         let text = format!(
-            "Depth only. Colours encode distance, not appearance. Red near, blue 4 m or farther, black invalid. Do not infer identity, colour, texture or text. Supply shape hypotheses only. Use current observation IDs, local Z and direction. Use an empty claims array when uncertain. Return JSON matching {schema}. Current scene: {}",
+            "Depth only. Colours encode distance, not appearance. Red near, blue 4 m or farther, black invalid. Do not infer identity, colour, texture or text. Use recent lateral movement events for the direction of travel of the same track. A human-sized upright silhouette can support a tentative person-like label. Supply shape hypotheses only. Use current observation IDs, local Z and direction. Use an empty claims array when uncertain. Return JSON matching {schema}. Context: {}. Current scene: {}",
+            self.history.prompt(s),
             serde_json::to_string(s)?
         );
         let mut parts = vec![json!({"type":"text","text":text})];
@@ -361,6 +1028,16 @@ impl Api {
                 body["response_format"] = json!({"type":"json_object"})
             }
             let (status, v) = self.completion(body).await?;
+            if self.c.model.is_some()
+                && !status.is_success()
+                && v["error"]["message"].as_str().is_some_and(|m| {
+                    m.to_ascii_lowercase()
+                        .contains("image input is not supported")
+                })
+            {
+                self.measurements_only = true;
+                return self.measurements(s, f.info.width).await;
+            }
             if [400, 422].contains(&status.as_u16()) && self.level < 2 {
                 self.level += 1;
                 continue;
@@ -423,20 +1100,77 @@ impl Api {
                 } else {
                     "First interpretation".to_owned()
                 };
-                let text = format!(
-                    "{} {}. {}",
-                    crate::describe::describe(s),
-                    change,
+                let trends = self.history.findings(s, f.info.width);
+                let main_trend = trends.iter().find(|t| {
+                    reply.claims.is_empty()
+                        || reply
+                            .claims
+                            .iter()
+                            .any(|c| t.ids.last() == Some(&c.observation_id))
+                });
+                let text = if let Some(t) = main_trend {
+                    let subject = reply
+                        .claims
+                        .iter()
+                        .find(|c| t.ids.last() == Some(&c.observation_id))
+                        .map(|c| c.hypothesis.as_str());
+                    match subject {
+                        Some("person-like shape") => t
+                            .text
+                            .replace("A foreground shape", "A person-like figure")
+                            .replace("A moving shape", "A moving person-like figure"),
+                        Some("hand-like shape") => {
+                            t.text.replace("A foreground shape", "A hand-like shape")
+                        }
+                        _ => t.text.clone(),
+                    }
+                } else if reply.claims.is_empty() {
+                    format!("{} {change}.", crate::describe::describe(s))
+                } else {
                     reply
                         .claims
                         .iter()
-                        .map(|c| format!("Possible {} ({})", c.hypothesis, c.observation_id))
+                        .map(|claim| {
+                            let obj = s
+                                .objects
+                                .iter()
+                                .find(|o| o.observation_id == claim.observation_id)
+                                .unwrap();
+                            let subject = match claim.hypothesis.as_str() {
+                                "person-like shape" => "A person-like figure",
+                                "hand-like shape" => "A hand-like shape",
+                                _ => "A foreground shape",
+                            };
+                            let passage = s
+                                .events
+                                .iter()
+                                .rev()
+                                .find(|e| {
+                                    e.object == Some(obj.id)
+                                        && e.passage.is_some()
+                                        && s.ns.saturating_sub(e.ns) <= 10_000_000_000
+                                })
+                                .and_then(|e| e.passage.as_ref());
+                            if let Some(p) = passage {
+                                format!("{subject} {}.", p.movement())
+                            } else {
+                                format!("{subject} is visible {:.2} m forward.", obj.region.z)
+                            }
+                        })
                         .collect::<Vec<_>>()
-                        .join(", ")
-                );
+                        .join(" ")
+                };
                 self.previous = Some((s.id.clone(), img, current));
                 return Ok(Report {
                     success: true,
+                    history_key: main_trend.map(|t| {
+                        format!(
+                            "{}-{:?}",
+                            t.key,
+                            reply.claims.first().map(|c| &c.hypothesis)
+                        )
+                    }),
+                    supporting_ids: main_trend.map(|t| t.ids.clone()).unwrap_or_default(),
                     claims: reply.claims,
                     text,
                     usage: v["usage"].clone(),

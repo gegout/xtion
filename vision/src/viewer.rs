@@ -1,17 +1,107 @@
 use eframe::egui::{self, Color32, Stroke, Vec2};
 use std::{
+    collections::VecDeque,
     sync::atomic::Ordering::Relaxed,
     time::{Duration, Instant},
 };
 use xtion_vision::{
-    ai::{Config, Interpreter},
-    describe::describe,
+    ai::{Config, Interpreter, Report, Transcript},
     image,
     pipeline::{Input, Pipeline},
     source::Result,
 };
+const AUBERGINE: Color32 = Color32::from_rgb(0x77, 0x29, 0x53);
+const APP_MARK: &[u8] = include_bytes!("../assets/xtion-mark.png");
+const RESPONSE_MARK: &[u8] = include_bytes!("../assets/response-mark.png");
+
+fn load_mark(ctx: &egui::Context, name: &str, bytes: &[u8]) -> egui::TextureHandle {
+    let icon = eframe::icon_data::from_png_bytes(bytes).expect("bundled logo must decode");
+    let pixels = egui::ColorImage::from_rgba_unmultiplied(
+        [icon.width as usize, icon.height as usize],
+        &icon.rgba,
+    );
+    ctx.load_texture(name, pixels, egui::TextureOptions::LINEAR)
+}
+const WARM_PAPER: Color32 = Color32::from_rgb(0xf6, 0xf6, 0xf5);
+fn install_theme(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    for path in [
+        "/usr/share/fonts/truetype/ubuntu/UbuntuSans[wdth,wght].ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+    ] {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts
+                .font_data
+                .insert("Ubuntu".into(), egui::FontData::from_owned(bytes).into());
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "Ubuntu".into());
+            ctx.set_fonts(fonts);
+            break;
+        }
+    }
+    ctx.set_theme(egui::Theme::Light);
+    let mut visuals = egui::Visuals::light();
+    visuals.panel_fill = Color32::WHITE;
+    visuals.widgets.noninteractive.fg_stroke.color = Color32::from_gray(0x33);
+    visuals.selection.bg_fill = AUBERGINE;
+    visuals.selection.stroke.color = Color32::WHITE;
+    visuals.hyperlink_color = AUBERGINE;
+    visuals.widgets.active.bg_stroke.color = AUBERGINE;
+    visuals.widgets.hovered.bg_stroke.color = AUBERGINE;
+    ctx.set_visuals(visuals);
+}
+#[derive(Clone, Copy)]
+enum ActionIcon {
+    Play,
+    Stop,
+    Refresh,
+}
+fn action_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: ActionIcon,
+    enabled: bool,
+) -> egui::Response {
+    let response = ui.add_enabled(enabled, egui::Button::new(format!("  {label}")));
+    let c = egui::pos2(response.rect.left() + 10., response.rect.center().y);
+    let colour = if enabled { AUBERGINE } else { Color32::GRAY };
+    let stroke = Stroke::new(1.4, colour);
+    match icon {
+        ActionIcon::Play => {
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![
+                    c + Vec2::new(-3., -4.),
+                    c + Vec2::new(4., 0.),
+                    c + Vec2::new(-3., 4.),
+                ],
+                colour,
+                Stroke::NONE,
+            ));
+        }
+        ActionIcon::Stop => {
+            ui.painter()
+                .rect_filled(egui::Rect::from_center_size(c, Vec2::splat(7.)), 1., colour);
+        }
+        ActionIcon::Refresh => {
+            let arc: Vec<_> = (0..=16)
+                .map(|i| c + Vec2::angled(0.4 + i as f32 * 0.31) * 4.)
+                .collect();
+            let end = *arc.last().unwrap();
+            ui.painter().add(egui::Shape::line(arc, stroke));
+            ui.painter()
+                .line_segment([end, end + Vec2::new(-3., 0.)], stroke);
+            ui.painter()
+                .line_segment([end, end + Vec2::new(0., -3.)], stroke);
+        }
+    }
+    response
+}
 pub struct Options {
     pub input: Input,
+    pub capture_fps: u16,
     pub ai: Option<Config>,
     pub threshold: u16,
     pub record: Option<String>,
@@ -21,20 +111,27 @@ pub struct Options {
 pub fn launch(opts: Options) -> Result<()> {
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
-        viewport: egui::ViewportBuilder::default().with_inner_size([1200., 760.]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1200., 760.])
+            .with_icon(eframe::icon_data::from_png_bytes(APP_MARK)?),
         ..Default::default()
     };
     eframe::run_native(
         "Xtion Vision",
         options,
-        Box::new(move |_| Ok(Box::new(Viewer::new(opts)))),
+        Box::new(move |cc| {
+            install_theme(&cc.egui_ctx);
+            Ok(Box::new(Viewer::new(opts, &cc.egui_ctx)))
+        }),
     )
     .map_err(|e| e.to_string().into())
 }
 struct Viewer {
+    capture_fps: u16,
     input: Input,
     pipe: Pipeline,
     endpoint: String,
+    api_key: String,
     model: String,
     ai: Option<Interpreter>,
     config: Config,
@@ -43,34 +140,82 @@ struct Viewer {
     record_path: String,
     replay_path: String,
     error: String,
+    app_mark: egui::TextureHandle,
+    response_mark: egui::TextureHandle,
     texture: Option<egui::TextureHandle>,
     texture_key: (u64, u16),
     shot: Option<String>,
     start: Instant,
     seconds: Option<f64>,
-    timeline: std::collections::VecDeque<String>,
-    last_ai: String,
-    last_status: String,
-    last_success: Option<(Instant, String, u64)>,
+    responses: VecDeque<Report>,
+    chat: Transcript,
+    show_chat: bool,
+    chat_view: crate::chat_view::ChatView,
+}
+fn api_key_field(ui: &mut egui::Ui, key: &mut String) -> egui::Response {
+    let key_field = egui::TextEdit::singleline(&mut *key)
+        .password(true)
+        .hint_text("Optional for local endpoints")
+        .show(ui);
+    // egui suppresses copying from password fields. Export only the
+    // user's selected characters on an explicit clipboard command.
+    if key_field.response.has_focus()
+        && ui.input(|i| i.events.contains(&egui::Event::Copy))
+        && let Some(range) = key_field.cursor_range.filter(|r| !r.is_empty())
+    {
+        ui.ctx().copy_text(range.slice_str(key).to_owned());
+    }
+    key_field.response.response
+}
+fn response_history(
+    ui: &mut egui::Ui,
+    responses: &VecDeque<Report>,
+) -> egui::scroll_area::ScrollAreaOutput<()> {
+    egui::ScrollArea::vertical()
+        .id_salt("response_history")
+        .stick_to_bottom(true)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for r in responses {
+                ui.small(format!(
+                    "{:.1} s   ·   {}   ·   {}",
+                    r.arrival_ns as f64 / 1e9,
+                    r.model,
+                    r.scene_id
+                ));
+                ui.add(
+                    egui::Label::new(egui::RichText::new(&r.text).size(14.))
+                        .selectable(true)
+                        .wrap(),
+                );
+                ui.add_space(3.);
+                ui.separator();
+            }
+        })
 }
 impl Viewer {
-    fn new(o: Options) -> Self {
-        let cfg = o.ai.clone().unwrap_or_else(|| Config::new(String::new()));
-        let ai = o.ai.map(Interpreter::start).transpose();
+    fn new(o: Options, ctx: &egui::Context) -> Self {
+        let mut cfg = o.ai.clone().unwrap_or_else(|| Config::new(String::new()));
+        let chat = Transcript::default();
+        cfg.transcript = Some(chat.clone());
+        let ai = o.ai.map(|_| Interpreter::start(cfg.clone())).transpose();
         let error = ai
             .as_ref()
             .err()
             .map(ToString::to_string)
             .unwrap_or_default();
         Self {
-            pipe: Pipeline::bounded(
+            capture_fps: o.capture_fps,
+            pipe: Pipeline::with_capture_rate(
                 o.input.clone(),
                 o.threshold,
                 o.record.clone(),
                 o.seconds.map(Duration::from_secs_f64),
+                o.capture_fps,
             ),
             input: o.input,
             endpoint: cfg.url.clone(),
+            api_key: cfg.api_key.clone().unwrap_or_default(),
             model: cfg.model.clone().unwrap_or_default(),
             ai: ai.ok().flatten(),
             config: cfg,
@@ -79,20 +224,47 @@ impl Viewer {
             record_path: o.record.unwrap_or_else(|| "session.xtv".into()),
             replay_path: String::new(),
             error,
+            app_mark: load_mark(ctx, "Xtion mark", APP_MARK),
+            response_mark: load_mark(ctx, "Response mark", RESPONSE_MARK),
             texture: None,
             texture_key: (0, 0),
             shot: o.screenshot,
             start: Instant::now(),
             seconds: o.seconds,
-            timeline: Default::default(),
-            last_ai: String::new(),
-            last_status: String::new(),
-            last_success: None,
+            responses: VecDeque::new(),
+            chat,
+            show_chat: true,
+            chat_view: Default::default(),
+        }
+    }
+    fn refresh_connection(&mut self) {
+        let mut next = self.config.clone();
+        next.url = self.endpoint.trim().trim_end_matches('/').to_owned();
+        let key = self.api_key.trim();
+        next.api_key = (!key.is_empty()).then(|| key.to_owned());
+        let model = self.model.trim();
+        next.model = (!model.is_empty()).then(|| model.to_owned());
+        let applied = match self.ai.as_mut() {
+            Some(worker) => worker.reconfigure(next.clone()),
+            None => Interpreter::start(next.clone()).map(|worker| self.ai = Some(worker)),
+        };
+        match applied {
+            Ok(()) => {
+                self.config = next;
+                self.responses.clear();
+                self.error.clear();
+            }
+            Err(e) => self.error = e.to_string(),
         }
     }
     fn depth_view(&mut self, ui: &mut egui::Ui, s: &xtion_vision::pipeline::Snapshot) {
         let health = &s.scene.health;
-        ui.label(format!("{:.1} FPS · gaps {} · incomplete {} · USB errors {} · host drops {} · {} ms since frame",s.fps,health.gaps,health.incomplete,health.errors,health.queue_drops,s.received.elapsed().as_millis()));
+        ui.small(format!(
+            "Intrinsics: {:?} · {:.0}% valid",
+            s.scene.optics,
+            s.scene.valid_fraction * 100.
+        ));
+        ui.label(format!("{:.1} processed FPS · gaps {} · incomplete {} · USB errors {} · host drops {} · {} ms since frame",s.recent_fps,health.gaps,health.incomplete,health.errors,health.queue_drops,s.received.elapsed().as_millis()));
         if self.texture_key != (s.processed, self.far) {
             let (w, h, rgb) = image::rgb(&s.frame, s.frame.info.width, self.far);
             let img = egui::ColorImage::from_rgb([w, h], &rgb);
@@ -144,23 +316,16 @@ impl Viewer {
             }
         }
     }
-    fn log(&mut self, s: String) {
-        if self.timeline.len() == 32 {
-            self.timeline.pop_front();
-        }
-        self.timeline
-            .push_back(format!("{:.1}s  {s}", self.start.elapsed().as_secs_f64()));
-    }
     fn restart(&mut self, input: Input) {
         if !self.pipe.finished.load(Relaxed) {
             self.error = "Stop the current capture before opening another source.".into();
             return;
         }
         self.input = input.clone();
-        self.pipe = Pipeline::start(input, self.threshold, None);
+        self.pipe =
+            Pipeline::with_capture_rate(input, self.threshold, None, None, self.capture_fps);
         self.texture_key = (0, 0);
-        self.last_ai.clear();
-        self.last_success = None;
+        self.responses.clear();
         if self.ai.take().is_some() {
             match Interpreter::start(self.config.clone()) {
                 Ok(a) => self.ai = Some(a),
@@ -187,10 +352,6 @@ impl eframe::App for Viewer {
         ctx.request_repaint_after(Duration::from_millis(30));
         let snap = self.pipe.latest.lock().unwrap().clone();
         let status = self.pipe.status.lock().unwrap().clone();
-        if self.last_status != status {
-            self.log(status.clone());
-            self.last_status = status.clone()
-        }
         if let Some(s) = &snap
             && s.received.elapsed() < Duration::from_millis(500)
             && !self.pipe.finished.load(Relaxed)
@@ -201,140 +362,227 @@ impl eframe::App for Viewer {
         let ai = snap
             .as_ref()
             .and_then(|s| self.ai.as_ref()?.latest(&s.scene));
-        if let Some(r) = &ai
-            && r.scene_id != self.last_ai
+        if let Some(r) = ai
+            && r.success
+            && self.responses.back().is_none_or(|old| {
+                old.scene_id != r.scene_id
+                    && old.text != r.text
+                    && (r.history_key.is_none() || old.history_key != r.history_key)
+            })
         {
-            if r.success {
-                self.last_success = Some((Instant::now(), r.model.clone(), r.latency_ms));
+            if self.responses.len() == 100 {
+                self.responses.pop_front();
             }
-            self.log(format!("AI {} · {}", r.model, r.text));
-            self.last_ai = r.scene_id.clone()
+            self.responses.push_back(r);
         }
+        egui::Panel::top("masthead")
+            .frame(
+                egui::Frame::NONE
+                    .fill(AUBERGINE)
+                    .inner_margin(egui::Margin::symmetric(16, 8)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.;
+                    ui.image((self.app_mark.id(), Vec2::splat(38.)));
+                    ui.label(
+                        egui::RichText::new("Xtion Vision")
+                            .color(Color32::WHITE)
+                            .size(20.),
+                    );
+                });
+            });
         egui::Panel::right("controls")
             .default_size(300.)
+            .frame(egui::Frame::NONE.fill(WARM_PAPER).inner_margin(12))
             .show(ui, |ui| {
-                ui.heading("Controls");
-                ui.horizontal(|ui| {
-                    if ui.button("Start sensor").clicked() {
-                        self.restart(Input::Live)
-                    }
-                    if ui.button("Stop").clicked() {
-                        self.pipe.request_stop()
-                    }
-                });
-                ui.label("Replay file");
-                ui.text_edit_singleline(&mut self.replay_path);
-                if ui.button("Open replay").clicked() {
-                    self.restart(Input::Replay(self.replay_path.clone()))
-                }
-                ui.label("Recording file");
-                ui.text_edit_singleline(&mut self.record_path);
-                ui.horizontal(|ui| {
-                    if ui.button("Record").clicked() {
-                        *self.pipe.record.lock().unwrap() = Some(self.record_path.clone())
-                    }
-                    if ui.button("Finish recording").clicked() {
-                        *self.pipe.record.lock().unwrap() = None
-                    }
-                });
-                if ui
-                    .add(egui::Slider::new(&mut self.threshold, 40..=500).text("Foreground mm"))
-                    .changed()
-                {
-                    self.pipe.threshold.store(self.threshold, Relaxed)
-                }
-                if ui.button("Relearn background").clicked() {
-                    self.pipe.recalibrate.store(true, Relaxed)
-                }
-                ui.add(egui::Slider::new(&mut self.far, 1000..=8000).text("Colour range mm"));
-                if ui.button("Save view as PNG").clicked() {
-                    self.shot = Some(format!(
-                        "xtion-view-{}.png",
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis()
-                    ))
-                }
-                ui.separator();
-                ui.heading("AI interpretation");
-                ui.label("Endpoint");
-                ui.text_edit_singleline(&mut self.endpoint);
-                ui.label("Model (blank for discovery)");
-                ui.text_edit_singleline(&mut self.model);
-                let mut on = self.ai.is_some();
-                if ui
-                    .checkbox(&mut on, "Enable AI and send depth views")
-                    .changed()
-                {
-                    self.ai = None;
-                    if on {
-                        self.config.url = self.endpoint.clone();
-                        self.config.model = (!self.model.is_empty()).then(|| self.model.clone());
-                        match Interpreter::start(self.config.clone()) {
-                            Ok(a) => self.ai = Some(a),
-                            Err(e) => self.error = e.to_string(),
+                egui::ScrollArea::vertical()
+                    .id_salt("control_scroll")
+                    .show(ui, |ui| {
+                        ui.heading("Capture controls");
+                        ui.horizontal(|ui| {
+                            if action_button(ui, "Start sensor", ActionIcon::Play, true).clicked() {
+                                self.restart(Input::Live)
+                            }
+                            if action_button(ui, "Stop", ActionIcon::Stop, true).clicked() {
+                                self.pipe.request_stop()
+                            }
+                        });
+                        if matches!(self.input, Input::Live) {
+                            ui.label("Sensor mode: VGA at 30 FPS");
+                            if ui
+                                .add(
+                                    egui::Slider::new(&mut self.capture_fps, 5..=30)
+                                        .text("App capture FPS"),
+                                )
+                                .changed()
+                            {
+                                self.pipe.set_capture_rate(self.capture_fps);
+                            }
                         }
-                    }
-                }
-                if let Some((time, model, ms)) = &self.last_success {
-                    ui.label(format!(
-                        "Last AI success · {model} · {ms} ms · {:.0}s ago",
-                        time.elapsed().as_secs_f64()
-                    ));
-                }
-                if !self.error.is_empty() {
-                    ui.colored_label(Color32::LIGHT_RED, &self.error);
-                }
-                ui.separator();
-                ui.heading("Scene description");
-                if let Some(s) = &snap {
-                    let stale = s.received.elapsed() > Duration::from_millis(500)
-                        || self.pipe.finished.load(Relaxed);
-                    if stale {
-                        ui.colored_label(Color32::YELLOW, "Last observation · capture inactive");
-                    }
-                    ui.label(describe(&s.scene));
-                    ui.label(format!(
-                        "Intrinsics: {:?} · {:.0}% valid",
-                        s.scene.optics,
-                        s.scene.valid_fraction * 100.
-                    ));
-                    if let Some(r) = &ai {
-                        ui.label(format!("{} · {} ms · {}", r.model, r.latency_ms, r.text));
-                        for c in &r.claims {
-                            ui.label(format!(
-                                "{} · {:.0}% confidence",
-                                c.observation_id,
-                                c.confidence * 100.
+                        ui.label("Replay file");
+                        ui.text_edit_singleline(&mut self.replay_path);
+                        if ui.button("Open replay").clicked() {
+                            self.restart(Input::Replay(self.replay_path.clone()))
+                        }
+                        ui.label("Recording file");
+                        ui.text_edit_singleline(&mut self.record_path);
+                        ui.horizontal(|ui| {
+                            if ui.button("Record").clicked() {
+                                *self.pipe.record.lock().unwrap() = Some(self.record_path.clone())
+                            }
+                            if ui.button("Finish recording").clicked() {
+                                *self.pipe.record.lock().unwrap() = None
+                            }
+                        });
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut self.threshold, 40..=500)
+                                    .text("Foreground mm"),
+                            )
+                            .changed()
+                        {
+                            self.pipe.threshold.store(self.threshold, Relaxed)
+                        }
+                        if ui.button("Relearn background").clicked() {
+                            self.pipe.recalibrate.store(true, Relaxed)
+                        }
+                        ui.add(
+                            egui::Slider::new(&mut self.far, 1000..=8000).text("Colour range mm"),
+                        );
+                        if ui.button("Save view as PNG").clicked() {
+                            self.shot = Some(format!(
+                                "xtion-view-{}.png",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis()
+                            ))
+                        }
+                        ui.separator();
+                        ui.heading("Model connection");
+                        ui.label("Endpoint URL");
+                        if ui.text_edit_singleline(&mut self.endpoint).changed() {
+                            // Never carry an entered credential over to a different endpoint.
+                            self.api_key = if self.endpoint.trim().trim_end_matches('/')
+                                == "https://api.openai.com/v1"
+                            {
+                                Config::environment_key().unwrap_or_default()
+                            } else {
+                                String::new()
+                            };
+                        }
+                        ui.label("API key");
+                        api_key_field(ui, &mut self.api_key);
+                        ui.label("Model · leave blank to discover");
+                        ui.text_edit_singleline(&mut self.model);
+                        let mut interval = self.config.refresh.as_secs_f64();
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut interval)
+                                    .range(0.1..=3600.)
+                                    .speed(0.2)
+                                    .prefix("Minimum AI interval: ")
+                                    .suffix(" s"),
+                            )
+                            .changed()
+                        {
+                            self.config.refresh = Duration::from_secs_f64(interval);
+                        }
+                        ui.horizontal(|ui| {
+                            ui.label("Response words");
+                            let max_min = (self.config.max_words - 6).min(40);
+                            ui.add(
+                                egui::DragValue::new(&mut self.config.min_words).range(1..=max_min),
+                            );
+                            ui.label("to");
+                            let min_max = (self.config.min_words + 6).max(20);
+                            ui.add(
+                                egui::DragValue::new(&mut self.config.max_words)
+                                    .range(min_max..=120),
+                            );
+                        });
+                        if action_button(
+                            ui,
+                            "Refresh connection",
+                            ActionIcon::Refresh,
+                            self.ai.is_some(),
+                        )
+                        .on_hover_text("Apply the endpoint, model and response length.")
+                        .clicked()
+                        {
+                            self.refresh_connection();
+                        }
+                        let mut on = self.ai.is_some();
+                        if ui.checkbox(&mut on, "Enable AI analysis").changed() {
+                            if on {
+                                self.refresh_connection();
+                            } else {
+                                self.ai = None;
+                            }
+                        }
+                        if let Some(a) = &self.ai {
+                            ui.small(format!(
+                                "Active · {} · {}",
+                                self.config.url,
+                                self.config
+                                    .model
+                                    .as_deref()
+                                    .unwrap_or("automatic selection")
                             ));
+                            ui.small(a.status());
                         }
+                        if !self.error.is_empty() {
+                            ui.colored_label(Color32::LIGHT_RED, &self.error);
+                        }
+                    });
+            });
+        let panel = egui::Panel::bottom("ai_responses")
+            .default_size(240.)
+            .min_size(110.)
+            .resizable(true)
+            .frame(
+                egui::Frame::NONE
+                    .fill(Color32::WHITE)
+                    .inner_margin(egui::Margin::symmetric(16, 10)),
+            )
+            .show(ui, |ui| {
+                ui.take_available_space();
+                ui.horizontal(|ui| {
+                    ui.image((self.response_mark.id(), Vec2::splat(26.)));
+                    ui.label(
+                        egui::RichText::new("AI responses")
+                            .color(AUBERGINE)
+                            .size(19.)
+                            .strong(),
+                    );
+                    ui.selectable_value(&mut self.show_chat, true, "Chat");
+                    ui.selectable_value(&mut self.show_chat, false, "Summaries");
+                    if self.show_chat {
+                        ui.separator();
+                        self.chat_view.toggle(ui);
                     }
+                });
+                ui.separator();
+                if self.show_chat {
+                    self.chat_view.show(ui, &self.chat);
+                } else if !self.responses.is_empty() {
+                    response_history(ui, &self.responses);
+                } else if let Some(a) = &self.ai {
+                    ui.label(a.status());
+                } else {
+                    ui.label("Enable AI in Controls to see scene interpretations.");
                 }
             });
-        egui::Panel::bottom("timeline")
-            .default_size(145.)
-            .show(ui, |ui| {
-                ui.heading("Timeline");
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for l in self.timeline.iter().rev().take(3) {
-                        ui.label(l);
-                    }
-                    if let Some(s) = &snap {
-                        for e in s.scene.events.iter().rev() {
-                            ui.label(format!(
-                                "{:.2}s  {}  {}  {:?}",
-                                e.ns as f64 * 1e-9,
-                                e.id,
-                                e.kind,
-                                e.object
-                            ));
-                        }
-                    }
-                });
-            });
+        // The native bottom panel owns the resize gesture along this edge.
+        let edge = panel.response.rect.center_top();
+        ui.painter().rect_filled(
+            egui::Rect::from_center_size(edge, Vec2::new(44., 4.)),
+            2.,
+            AUBERGINE,
+        );
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("Depth viewer");
+            ui.heading("Depth view");
             ui.label(format!(
                 "{} · perception queue drops {} · recorder drops {}",
                 status,
@@ -365,6 +613,218 @@ impl eframe::App for Viewer {
                     }
                 }),
             ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "ai")]
+    #[test]
+    fn refresh_uses_edited_endpoint_and_model_and_preserves_worker_on_invalid_url() {
+        use std::{
+            io::{BufRead, BufReader, Read, Write},
+            net::TcpListener,
+            sync::mpsc,
+            thread,
+        };
+        use xtion_vision::{
+            perception::Engine,
+            source::{FrameSource, SyntheticSource},
+        };
+        let mut viewer = Viewer::new(
+            Options {
+                input: Input::Synthetic,
+                capture_fps: 10,
+                ai: None,
+                threshold: 100,
+                record: None,
+                screenshot: None,
+                seconds: Some(0.1),
+            },
+            &egui::Context::default(),
+        );
+        let mut src = SyntheticSource::default();
+        let f = src.next_frame().unwrap().unwrap();
+        let s = Engine::default().observe(&f);
+        for model in ["original", "replacement"] {
+            let sock = TcpListener::bind("127.0.0.1:0").unwrap();
+            viewer.endpoint = format!("http://{}/v1/", sock.local_addr().unwrap());
+            viewer.model = format!(" {model} ");
+            viewer.api_key = format!("test-credential-{model}");
+            viewer.refresh_connection();
+            let (tx, rx) = mpsc::channel();
+            thread::spawn(move || {
+                let (mut stream, _) = sock.accept().unwrap();
+                let mut reader = BufReader::new(&stream);
+                let mut size = 0;
+                let mut authorized = false;
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if line.trim_end().eq_ignore_ascii_case(&format!(
+                        "authorization: Bearer test-credential-{model}"
+                    )) {
+                        authorized = true;
+                    }
+                    if let Some(n) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        size = n.trim().parse().unwrap();
+                    }
+                }
+                let mut buf = vec![0; size];
+                reader.read_exact(&mut buf).unwrap();
+                assert!(authorized);
+                let body: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+                let reply = r#"{"choices":[{"message":{"content":"{\"claims\":[]}"}}]}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                    reply.len()
+                )
+                .unwrap();
+                tx.send(body["model"].as_str().unwrap().to_owned()).unwrap();
+            });
+            viewer
+                .ai
+                .as_mut()
+                .unwrap()
+                .submit(s.clone().into(), f.clone().into(), Duration::ZERO);
+            assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), model);
+        }
+        viewer.endpoint = "invalid".into();
+        viewer.refresh_connection();
+        assert!(viewer.ai.is_some() && !viewer.error.is_empty());
+        assert_eq!(viewer.config.model.as_deref(), Some("replacement"));
+    }
+    #[test]
+    fn masked_api_key_pastes_and_copies_only_the_selected_text() {
+        use egui::text::{CCursor, CCursorRange};
+        let ctx = egui::Context::default();
+        let mut key = String::new();
+        let mut id = egui::Id::NULL;
+        let mut show = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = api_key_field(ui, &mut key);
+                    id = response.id;
+                    response.request_focus();
+                },
+            );
+            output.textures_delta.clear();
+            (id, output.platform_output.commands)
+        };
+        show(vec![]);
+        let (id, commands) = show(vec![egui::Event::Paste("test-only".into())]);
+        assert!(
+            !commands
+                .iter()
+                .any(|c| matches!(c, egui::OutputCommand::CopyText(_)))
+        );
+        let mut state = egui::TextEdit::load_state(&ctx, id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(4))));
+        state.store(&ctx, id);
+        let (_, commands) = show(vec![egui::Event::Copy]);
+        assert!(
+            commands
+                .iter()
+                .any(|c| matches!(c,egui::OutputCommand::CopyText(v) if v=="test"))
+        );
+        assert_eq!(key, "test-only");
+    }
+    #[test]
+    fn dragging_chat_divider_changes_panel_height() {
+        use eframe::App;
+        let ctx = egui::Context::default();
+        let mut viewer = Viewer::new(
+            Options {
+                input: Input::Synthetic,
+                capture_fps: 10,
+                ai: None,
+                threshold: 100,
+                record: None,
+                screenshot: None,
+                seconds: Some(0.1),
+            },
+            &ctx,
+        );
+        let mut paint = |events| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(1200., 760.),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut rect = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(input, |ui| {
+                let id = ui.scope_id().with("ai_responses");
+                viewer.ui(ui, &mut eframe::Frame::_new_kittest());
+                rect = egui::containers::panel::PanelState::load(&ctx, id)
+                    .unwrap()
+                    .outer_rect;
+            });
+            output.textures_delta.clear();
+            rect
+        };
+        let initial = paint(vec![]);
+        let grip = initial.center_top();
+        let raised = grip - Vec2::new(0., 90.);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        paint(vec![egui::Event::PointerMoved(grip)]);
+        paint(vec![button(grip, true)]);
+        paint(vec![egui::Event::PointerMoved(raised)]);
+        paint(vec![button(raised, false)]);
+        assert!(paint(vec![]).height() > initial.height() + 70.);
+    }
+    #[test]
+    fn history_fits_three_full_responses_and_scrolls_to_recent_entries() {
+        let ctx = egui::Context::default();
+        install_theme(&ctx);
+        let mut reports = VecDeque::new();
+        for n in 1..=10 {
+            let mut report = Report::default();
+            report.text = "A foreground shape moved across the centre of the scene and continued toward the right edge while the camera tracked its position over several seconds of continuous depth measurements. The last observation still placed the shape inside the camera view.".into();
+            assert_eq!(report.text.split_whitespace().count(), 40);
+            report.scene_id = format!("f{n}");
+            reports.push_back(report);
+            if n != 3 && n != 10 {
+                continue;
+            }
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    Vec2::new(830., 200.),
+                )),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let area = response_history(ui, &reports);
+                if n == 3 {
+                    assert!(area.content_size.y <= area.inner_rect.height());
+                } else {
+                    assert!(area.content_size.y > area.inner_rect.height());
+                    assert!(area.state.clamped_offset().y > 0.);
+                }
+            });
+            output.textures_delta.clear();
         }
     }
 }

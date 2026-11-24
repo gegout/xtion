@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 32 32">
+  <title>Scene interpretation</title>
+  <rect x="1" y="1" width="30" height="30" rx="8" fill="#f1e9ed"/>
+  <path fill="#772953" d="M7 11a4 4 0 0 1 4-4h11a4 4 0 0 1 4 4v7a4 4 0 0 1-4 4h-8l-6 4v-5a4 4 0 0 1-1-3z"/>
+  <path fill="#fff7ef" d="M11 12h4l-1 3h-2l-1 2H9zm6 0h4l-1 3h-2l-1 2h-2z"/>
+  <circle cx="24.5" cy="8" r="3" fill="#e95420"/>
+</svg>

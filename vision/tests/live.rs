@@ -41,3 +41,36 @@ fn five_clean_restarts() {
 fn ten_minute_perception_soak() {
     run_for(603)
 }
+
+#[test]
+#[ignore = "requires exclusive access to the physical sensor"]
+fn adjust_app_capture_rate_without_reopening() {
+    let pipeline =
+        Pipeline::with_capture_rate(Input::Live, 100, None, Some(Duration::from_secs(15)), 5);
+    for fps in [5, 15, 30] {
+        pipeline.set_capture_rate(fps);
+        let start = Instant::now();
+        thread::sleep(Duration::from_millis(1600));
+        loop {
+            if let Some(s) = pipeline.latest.lock().unwrap().as_ref()
+                && s.processed > 2
+                && (s.recent_fps - f64::from(fps)).abs() < 1.5
+            {
+                println!("target {fps}, measured {:.2}", s.recent_fps);
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(4),
+                "rate change did not settle"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    pipeline.request_stop();
+    let stop = Instant::now();
+    while !pipeline.finished.load(Ordering::Acquire) {
+        assert!(stop.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(&*pipeline.status.lock().unwrap(), "stopped");
+}

@@ -25,6 +25,8 @@ cargo test --workspace --locked
 
 Keep the camera fixed and start with an empty scene. The viewer learns the initial background automatically. Select **Relearn background** after moving the camera. Increasing **Foreground mm** requires larger depth differences. Stop capture before opening a replay or restarting the sensor. The colour legend shows positive axial depth through the configured far limit, with black for missing readings. The live stream currently supplies nominal lateral geometry and device-calibrated axial depth when available.
 
+**Live capture rate.** Xtion Vision defaults to 10 retained frames/s. Set `--capture-fps 5` through `--capture-fps 30` or adjust **App capture FPS** while the viewer is running. This setting controls which live frames reach perception, recording and the model. Replay preserves recorded timing. The connected firmware 5.8.22 reported 30 FPS for VGA in a read-only preset query. At a lower application rate the sensor still streams VGA/30 over USB. The shutdown summary counts intentional omissions as `sampled_out`.
+
 Headless mode writes an observation per delivered frame and separate event records. Live output favours the latest observation if the reader stalls. Use `--fast --replay` for lossless deterministic analysis of all recorded frames. Ctrl-C ends headless acquisition. `--seconds N` bounds a run. `--record` and `--ply` require a new file. At VGA/30, uncompressed recording uses roughly 1.1 GB per minute. A PNG contains the entire viewer.
 
 ### Optional AI
@@ -36,9 +38,21 @@ target/release/xtion-vision --ai-url https://api.openai.com/v1 --ai-model MODEL_
 
 For a build that omits the AI HTTP client entirely, use `cargo build -p xtion-vision --release --no-default-features`.
 
-AI is off by default. Enabling it sends reduced depth images, observations, recent events and motion context to the chosen endpoint. Local endpoints can operate without credentials. Set `OPENAI_API_KEY` in the process environment when required. The UI and JSON report hypotheses, their observation IDs and confidence. The local summary continues during discovery, outages or rejected replies.
+AI is off by default. Enabling it sends reduced depth images, observations, recent events and motion context to the chosen endpoint. Local endpoints can operate without credentials. Enter the key in the masked **Model connection → API key** field and select **Refresh connection** (or **Enable AI analysis**). The desktop keeps the key in memory for that endpoint. For headless use, set `OPENAI_API_KEY` before launch. The UI and JSON report hypotheses, their observation IDs and confidence. The local summary continues during discovery, outages or rejected replies.
 
-Discovery tests up to four candidate models under a 30-second overall deadline. Each request times out after eight seconds. Four synthetic quadrant checks establish image use before model selection. Explicit model mode skips discovery. Chat Completions is the default. A missing Chat route falls back to Responses only when the endpoint advertises a matching POST operation in its OpenAPI document. `--ai-candidates`, `--ai-budget-ms`, `--ai-timeout-ms`, `--ai-probe-tokens`, `--ai-tokens` and `--ai-refresh-ms` set limits. The default refresh interval is two seconds and the default interpretation cap is 400 output tokens. Run `xtion-vision --help` for the full CLI.
+Discovery tests up to four candidate models under a 30-second overall deadline. Each request times out after twenty seconds by default. Four synthetic quadrant checks establish image use before model selection. Explicit model mode skips discovery. Chat Completions is the default. A missing Chat route falls back to Responses only when the endpoint advertises a matching POST operation in its OpenAPI document. `--ai-candidates`, `--ai-budget-ms`, `--ai-timeout-ms`, `--ai-probe-tokens`, `--ai-tokens` and `--ai-refresh-ms` set limits. The default minimum AI interval is seven seconds and the default interpretation cap is 400 output tokens. Run `xtion-vision --help` for the full CLI.
+
+For the local SmolLM3-3B service, select the model explicitly and allow five seconds between analyses:
+
+```bash
+target/release/xtion-vision --ai-url http://localhost:8366/v1 --ai-model smollm3-3b --ai-timeout-ms 20000
+```
+
+In **AI responses → Chat**, the reader shows each request and reply in compact language. Expand **Prompt and context** to inspect the full instructions and observations. Toggle **JSON** to inspect or copy the entire retained transcript, including request bodies, encoded images, raw model content, endpoint errors and retries. Toggle it off to return to the reader. Drag the aubergine grip on the panel’s top edge to change its height. The latest 100 exchanges stay in memory across model changes until the viewer closes. Authorization headers are excluded.
+
+The **Summaries** tab keeps the last 100 accepted observations in a scrollable history with model and capture time. Responses default to 20–40 words. Adjust **Response words** and click **Refresh connection**, or pass inclusive bounds such as `--ai-min-words 12 --ai-max-words 24`. Edit **Endpoint URL**, **API key** and **Model**, then click **Refresh connection** to apply both while capture continues. The active connection and request status appear beneath the controls.
+
+The [scene interpretation prompt](vision/src/ai/scene-prompt.txt) compares up to 30 seconds of timestamped track observations and recent events. It asks which shape moved, where it moved, whether it settled, and whether tracking was lost. The viewer suppresses consecutive reports of the same steady track despite minor depth jitter. With a text-only model such as SmolLM3-3B, Vision sends measured track history and upright shape dimensions. A supported interpretation can read “A person-like figure moved from left to right. The movement lasted 2.4 seconds, during which the camera recorded the same track in 24 separate observations.” This describes a possible person crossing between the outer thirds of the camera image. Smaller shapes receive a generic label. When tracking provides no such evidence, the model can summarize depth layout or coverage. The headless JSON stream still carries individual events. Automatic model discovery requires a passing image probe. Adjust **Minimum AI interval** in Controls to pace requests independently of capture.
 
 ### Recording format and integration
 

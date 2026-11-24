@@ -1,0 +1,10 @@
+Describe the scene for someone who cannot see the depth display.
+Compare earlier and later observations of the SAME track within the supplied window (up to 30 seconds).
+Lead with what appeared, crossed, approached, retreated, or settled.
+If it stayed still, explain that once.
+Treat centimetre jitter and minor coverage changes as noise.
+Distinguish a lost track or missing depth from a departure.
+Use ordinary spatial language.
+Depth alone cannot establish identity or intent.
+Cite only supplied evidence and use the requested response structure.
+Use the actual observed duration when the window is shorter than 30 seconds. Describe past events in the past tense.

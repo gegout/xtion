@@ -31,6 +31,8 @@ pub struct SceneEvent {
     pub ns: u64,
     pub kind: String,
     pub object: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passage: Option<crate::trajectory::Passage>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct SceneState {
@@ -52,6 +54,7 @@ struct Track {
     hits: u32,
     votes: i8,
     active: bool,
+    path: crate::trajectory::Trajectory,
 }
 #[derive(Default)]
 pub struct Engine {
@@ -83,6 +86,7 @@ impl Engine {
             ns,
             kind: kind.to_string(),
             object,
+            passage: None,
         });
     }
     pub fn observe(&mut self, f: &DepthFrame) -> SceneState {
@@ -196,6 +200,7 @@ impl Engine {
             for t in &mut self.tracks {
                 t.seen = ns;
                 t.votes = 0;
+                t.path = Default::default();
             }
             self.obscured = obscured;
             if obscured {
@@ -283,6 +288,7 @@ impl Engine {
             }
         }
         let mut events = vec![];
+        let mut passages = vec![];
         self.tracks.retain(|t| {
             if ns.saturating_sub(t.seen) > 350_000_000 {
                 if t.active {
@@ -330,6 +336,7 @@ impl Engine {
                     hits: 0,
                     votes: 0,
                     active: false,
+                    path: Default::default(),
                 });
                 self.tracks.len() - 1
             };
@@ -373,12 +380,23 @@ impl Engine {
                 t.active = true;
                 events.push(("appeared", t.obj.id))
             }
+            if status == "tracking" {
+                if let Some(p) = t.path.observe(&t.obj.observation_id, ns, &t.obj.region, w) {
+                    passages.push((t.obj.id, p));
+                }
+            } else {
+                t.path = Default::default();
+            }
             if t.active {
                 visible.push(t.obj.clone())
             }
         }
         for (kind, id) in events {
             self.event(ns, kind, Some(id))
+        }
+        for (track, passage) in passages {
+            self.event(ns, "lateral movement", Some(track));
+            self.history.back_mut().unwrap().passage = Some(passage);
         }
         SceneState {
             id: format!("f{}", self.serial),

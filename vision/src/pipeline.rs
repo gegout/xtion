@@ -29,6 +29,22 @@ pub struct Snapshot {
     pub received: Instant,
     pub processed: u64,
     pub fps: f64,
+    pub recent_fps: f64,
+}
+/// Select at most one complete frame per arrival-time bin. A rate change
+/// starts a fresh bin sequence; native VGA/30 passes every complete frame.
+#[derive(Default)]
+struct FrameSampler {
+    previous: Option<(u16, u128)>,
+}
+impl FrameSampler {
+    fn keep(&mut self, fps: u16, arrival_ns: u64) -> bool {
+        let key = (
+            fps,
+            u128::from(arrival_ns) * u128::from(fps) / 1_000_000_000,
+        );
+        self.previous.replace(key) != Some(key) || fps == 30
+    }
 }
 struct Queue<T> {
     state: Mutex<(VecDeque<T>, bool)>,
@@ -102,6 +118,8 @@ pub struct Pipeline {
     pub threshold: Arc<AtomicU16>,
     pub record: Arc<Mutex<Option<String>>>,
     pub finished: Arc<AtomicBool>,
+    capture_fps: Arc<AtomicU16>,
+    pub sampled_out: Arc<AtomicU64>,
 }
 impl Pipeline {
     pub fn start(input: Input, threshold: u16, record: Option<String>) -> Self {
@@ -113,7 +131,21 @@ impl Pipeline {
         record: Option<String>,
         limit: Option<Duration>,
     ) -> Self {
+        Self::with_capture_rate(input, threshold, record, limit, 30)
+    }
+    pub fn set_capture_rate(&self, fps: u16) {
+        self.capture_fps.store(fps.clamp(5, 30), Relaxed);
+    }
+    pub fn with_capture_rate(
+        input: Input,
+        threshold: u16,
+        record: Option<String>,
+        limit: Option<Duration>,
+        fps: u16,
+    ) -> Self {
         let mut p = Self {
+            capture_fps: Arc::new(AtomicU16::new(fps.clamp(5, 30))),
+            sampled_out: Default::default(),
             stop: Default::default(),
             threads: vec![],
             latest: Default::default(),
@@ -141,6 +173,8 @@ impl Pipeline {
             p.record.clone(),
             p.recording_error.clone(),
         );
+        let rate = p.capture_fps.clone();
+        let skipped = p.sampled_out.clone();
         p.threads.push(thread::spawn(move || {
             let start = Instant::now();
             let stopping = || stop.load(Relaxed) || limit.is_some_and(|d| start.elapsed() >= d);
@@ -157,8 +191,13 @@ impl Pipeline {
                 let mut last = None;
                 let mut due = Instant::now();
                 let mut recording = false;
+                let mut sampler = FrameSampler::default();
                 while !stopping() {
                     let Some(f) = src.next_frame()? else { break };
+                    if !paced && !sampler.keep(rate.load(Relaxed), f.info.arrival_ns) {
+                        skipped.fetch_add(1, Relaxed);
+                        continue;
+                    }
                     if paced {
                         if let Some(t) = last {
                             due += Duration::from_nanos(f.info.arrival_ns.saturating_sub(t));
@@ -205,6 +244,7 @@ impl Pipeline {
             let mut engine = Engine::default();
             let mut first = None;
             let mut processed = 0;
+            let mut recent = VecDeque::new();
             while let Some((received, frame)) = frames.pop() {
                 if recal.swap(false, Relaxed) {
                     engine.recalibrate()
@@ -221,12 +261,28 @@ impl Pipeline {
                 } else {
                     0.
                 };
+                let now = frame.info.arrival_ns;
+                recent.push_back(now);
+                while recent.len() > 120
+                    || recent
+                        .front()
+                        .is_some_and(|t| now.saturating_sub(*t) > 1_000_000_000)
+                {
+                    recent.pop_front();
+                }
+                let span = now - recent[0];
+                let recent_fps = if span > 0 {
+                    (recent.len() - 1) as f64 * 1e9 / span as f64
+                } else {
+                    0.
+                };
                 *latest.lock().unwrap() = Some(Snapshot {
                     scene,
                     frame,
                     received,
                     processed,
                     fps,
+                    recent_fps,
                 });
             }
             finished.store(true, Release);
@@ -246,7 +302,7 @@ impl Drop for Pipeline {
         if let Some(s) = self.latest.lock().unwrap().as_ref() {
             eprintln!(
                 "{}",
-                serde_json::json!({"type":"capture_summary","processed":s.processed,"fps":s.fps,"stage_drops":self.drops.load(Relaxed),"recording_drops":self.recording_drops.load(Relaxed),"health":s.scene.health,"status":*self.status.lock().unwrap()})
+                serde_json::json!({"type":"capture_summary","processed":s.processed,"fps":s.fps,"sampled_out":self.sampled_out.load(Relaxed),"stage_drops":self.drops.load(Relaxed),"recording_drops":self.recording_drops.load(Relaxed),"health":s.scene.health,"status":*self.status.lock().unwrap()})
             );
         }
     }
@@ -284,5 +340,26 @@ mod deadline_tests {
         assert!(p.finished.load(Acquire));
         assert_eq!(&*p.status.lock().unwrap(), "stopped");
         assert!(p.latest.lock().unwrap().as_ref().unwrap().processed < 10);
+    }
+}
+
+#[cfg(test)]
+mod rate_tests {
+    use super::*;
+    #[test]
+    fn selection_tracks_arrival_time_and_changes_immediately() {
+        for fps in [5, 10, 15, 23, 30] {
+            let mut s = FrameSampler::default();
+            let kept = (0..300)
+                .filter(|i| s.keep(fps, i * 1_000_000_000 / 30))
+                .count();
+            assert_eq!(kept, fps as usize * 10);
+        }
+        let mut s = FrameSampler::default();
+        assert!(s.keep(5, 0));
+        assert!(!s.keep(5, 35_000_000));
+        assert!(s.keep(15, 40_000_000));
+        assert!(s.keep(5, 2_000_000_000));
+        assert!(!s.keep(5, 2_000_000_001));
     }
 }

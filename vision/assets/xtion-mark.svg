@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 64 64">
+  <title>Xtion Vision paired lenses</title>
+  <rect x="1" y="1" width="62" height="62" rx="16" fill="#35142d"/>
+  <path fill="#e95420" d="M33 25 27 31l-4-4a7 7 0 1 0 0 10l19-19a13 13 0 0 1 11-3l-5 7a7 7 0 0 0-3 2L29 41a14 14 0 1 1 0-20z"/>
+  <path fill="#fff7ef" d="m30 39 6-6 4 4a7 7 0 1 0 0-10L21 46a13 13 0 0 1-11 3l5-7a7 7 0 0 0 3-2l16-17a14 14 0 1 1 0 20z"/>
+  <circle cx="18.3" cy="32" r="2.5" fill="#fff7ef"/>
+  <circle cx="45" cy="32" r="2.5" fill="#ff9a65"/>
+</svg>

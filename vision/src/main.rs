@@ -1,3 +1,4 @@
+mod chat_view;
 mod viewer;
 use std::{
     fs::File,
@@ -19,13 +20,17 @@ use xtion_vision::{
     source::*,
 };
 const HELP: &str = "xtion-vision [--headless] [--replay PATH | --synthetic] [--fast] [--seconds N]
+    --capture-fps N     Retain 5..30 live frames/s for processing and recording (default 10)
     --record NEW.xtv    Save raw depth, clocks and health
     --png VIEW.png      Save desktop window
     --ply NEW.ply       Export first metric cloud in headless mode
     --threshold-mm N    Minimum foreground depth difference (40..65535)
     --ai-url BASE       Enable AI at this Chat Completions endpoint
     --ai-model NAME     Skip model discovery
-    --ai-refresh-ms N --ai-timeout-ms N --ai-budget-ms N --ai-candidates N --ai-probe-tokens N --ai-tokens N";
+    --ai-refresh-ms N   Minimum milliseconds between analyses (default 7000)
+    --ai-min-words N    Minimum response length (default 20)
+    --ai-max-words N    Maximum response length (default 40)
+    --ai-timeout-ms N --ai-budget-ms N --ai-candidates N --ai-probe-tokens N --ai-tokens N";
 fn main() {
     if let Err(e) = run() {
         eprintln!("{e}");
@@ -80,9 +85,10 @@ fn run() -> Result<()> {
     while idx < args.len() {
         match args[idx].as_str() {
             "--headless" | "--fast" | "--synthetic" => {}
-            "--replay" | "--record" | "--png" | "--ply" | "--seconds" | "--threshold-mm"
-            | "--ai-url" | "--ai-model" | "--ai-refresh-ms" | "--ai-timeout-ms"
-            | "--ai-budget-ms" | "--ai-candidates" | "--ai-tokens" | "--ai-probe-tokens" => {
+            "--capture-fps" | "--replay" | "--record" | "--png" | "--ply" | "--seconds"
+            | "--threshold-mm" | "--ai-url" | "--ai-model" | "--ai-refresh-ms"
+            | "--ai-min-words" | "--ai-max-words" | "--ai-timeout-ms" | "--ai-budget-ms"
+            | "--ai-candidates" | "--ai-tokens" | "--ai-probe-tokens" => {
                 idx += 1;
                 if args
                     .get(idx)
@@ -107,6 +113,13 @@ fn run() -> Result<()> {
     } else {
         Input::Live
     };
+    let capture_fps = val("--capture-fps").unwrap_or("10").parse::<u16>()?;
+    if !(5..=30).contains(&capture_fps) {
+        return Err("--capture-fps must be 5..30".into());
+    }
+    if val("--capture-fps").is_some() && !matches!(input, Input::Live) {
+        return Err("--capture-fps applies only to live capture".into());
+    }
     let threshold = val("--threshold-mm").unwrap_or("100").parse()?;
     if threshold < 40 {
         return Err("threshold must be at least 40 mm".into());
@@ -120,11 +133,22 @@ fn run() -> Result<()> {
     if let Some(c) = &mut config {
         c.model = val("--ai-model").map(str::to_owned);
         c.candidates = val("--ai-candidates").unwrap_or("4").parse()?;
-        c.timeout = Duration::from_millis(val("--ai-timeout-ms").unwrap_or("8000").parse()?);
+        c.timeout = Duration::from_millis(val("--ai-timeout-ms").unwrap_or("20000").parse()?);
         c.budget = Duration::from_millis(val("--ai-budget-ms").unwrap_or("30000").parse()?);
         c.probe_tokens = val("--ai-probe-tokens").unwrap_or("4").parse()?;
         c.tokens = val("--ai-tokens").unwrap_or("400").parse()?;
-        c.refresh = Duration::from_millis(val("--ai-refresh-ms").unwrap_or("2000").parse()?);
+        if let Some(ms) = val("--ai-refresh-ms") {
+            c.refresh = Duration::from_millis(ms.parse()?);
+        }
+        if let Some(n) = val("--ai-min-words") {
+            c.min_words = n.parse()?;
+        }
+        if let Some(n) = val("--ai-max-words") {
+            c.max_words = n.parse()?;
+        }
+        c.validate_words()?;
+    } else if ["--ai-min-words", "--ai-max-words"].iter().any(|k| flag(k)) {
+        return Err("AI word limits require --ai-url".into());
     } else if flag("--ai-model") {
         return Err("--ai-model requires --ai-url".into());
     }
@@ -142,6 +166,7 @@ fn run() -> Result<()> {
         }
         return viewer::launch(viewer::Options {
             input,
+            capture_fps,
             ai: config,
             threshold,
             record,
@@ -167,11 +192,12 @@ fn run() -> Result<()> {
         stdout: io::stdout(),
     };
     if matches!(input, Input::Live) || matches!(input, Input::Replay(_)) && !flag("--fast") {
-        let pipe = Pipeline::bounded(
+        let pipe = Pipeline::with_capture_rate(
             input,
             threshold,
             record,
             seconds.map(Duration::from_secs_f64),
+            capture_fps,
         );
         let mut seen = 0;
         let mut stale = false;

@@ -257,3 +257,394 @@ fn responses_requires_an_advertised_operation() {
     });
     assert!(!run(&unsupported, true, 500).success);
 }
+
+#[test]
+fn explicit_text_model_selects_grounded_measurements_after_image_rejection() {
+    let calls = AtomicUsize::new(0);
+    let m = mock(move |_, body| {
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            assert!(body["messages"][0]["content"].is_array());
+            return (
+                500,
+                json!({"error":{"message":"image input is not supported - hint: missing projector"}}),
+            );
+        }
+        assert!(body["messages"][0]["content"].is_string());
+        let choices =
+            &body["response_format"]["json_schema"]["schema"]["properties"]["index"]["enum"];
+        chat(if choices.as_array().unwrap().len() == 1 {
+            r#"{"index":0}"#
+        } else {
+            r#"{"index":1}"#
+        })
+    });
+    let transcript = Transcript::default();
+    let mut c = Config::new(m.url.clone());
+    c.model = Some("vision".into());
+    c.transcript = Some(transcript.clone());
+    let mut a = Interpreter::start(c).unwrap();
+    let (s, f) = job();
+    a.submit(s.clone(), f.clone(), Duration::ZERO);
+    let r = poll(&a, &s);
+    let exchanges = transcript.snapshot();
+    assert_eq!(exchanges.len(), 2);
+    assert!(exchanges[0].status.contains("500"));
+    assert!(
+        exchanges[0]
+            .response
+            .as_ref()
+            .unwrap()
+            .contains("missing projector")
+    );
+    assert!(exchanges[0].request.contains("data:image/png;base64,"));
+    let sent: Value = serde_json::from_str(&exchanges[1].request).unwrap();
+    assert_eq!(
+        exchanges[1].prompt.as_ref(),
+        sent["messages"][0]["content"].as_str().unwrap()
+    );
+    assert!(
+        exchanges[1].prompt.contains("30 seconds") && exchanges[1].prompt.contains("Candidates:")
+    );
+    let raw: Value = serde_json::from_str(exchanges[1].response.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        exchanges[1].answer.as_deref(),
+        raw["choices"][0]["message"]["content"].as_str()
+    );
+    assert!(exchanges[1].status.contains("200"));
+    assert!(r.success);
+    assert!((20..=40).contains(&r.text.split_whitespace().count()));
+    assert_eq!(r.supporting_ids.as_slice(), std::slice::from_ref(&s.id));
+    assert!(r.claims.is_empty());
+    let mut next = (*s).clone();
+    next.objects.clear();
+    assert!(
+        a.latest(&next).is_some(),
+        "an unrelated track does not invalidate a sector measurement"
+    );
+    next.sector_z_m[0] = Some(0.5);
+    assert!(a.latest(&next).is_none(), "the selected surface has moved");
+    let next = Arc::new(next);
+    a.submit(next.clone(), f, Duration::ZERO);
+    assert!(poll(&a, &next).success);
+    assert_eq!(m.n.load(Ordering::SeqCst), 3);
+}
+#[test]
+fn event_bursts_wait_for_refresh_and_replace_pending_frames() {
+    let m = mock(|_, _| chat("{\"claims\":[]}"));
+    let mut a = worker(&m, true, 500);
+    let (s, f) = job();
+    let refresh = Duration::from_millis(350);
+    a.submit(s.clone(), f.clone(), refresh);
+    assert!(poll(&a, &s).success);
+    let mut next = (*s).clone();
+    for k in 1..6 {
+        next.id = format!("updated{k}");
+        next.objects[0].region.z += 0.3;
+        next.events.last_mut().unwrap().id = format!("event{k}");
+        a.submit(Arc::new(next.clone()), f.clone(), refresh);
+    }
+    thread::sleep(Duration::from_millis(80));
+    assert_eq!(m.n.load(Ordering::SeqCst), 1);
+    assert_eq!(poll(&a, &next).scene_id, "updated5");
+    assert_eq!(m.n.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+#[ignore = "requires the local smollm3-3b Chat endpoint on port 8366; uses synthetic observations"]
+fn local_model_prioritizes_depth_evidence() {
+    let (scene, frame) = job();
+    let mut c = Config::new("http://localhost:8366/v1".into());
+    c.model = Some("smollm3-3b".into());
+    c.timeout = Duration::from_secs(25);
+    let mut ai = Interpreter::start(c).unwrap();
+    for (id, expected) in [
+        ("approach", "approaching the sensor"),
+        ("retreat", "moving away from the sensor"),
+        ("layout", "Median surface depth"),
+        ("occluded", "insufficient depth coverage"),
+    ] {
+        let mut s = (*scene).clone();
+        s.id = id.into();
+        s.status = "tracking";
+        s.sector_z_m = [Some(2.8), Some(1.4), Some(3.2)];
+        match id {
+            "layout" => s.objects.clear(),
+            "occluded" => {
+                s.objects.clear();
+                s.status = "insufficient depth coverage";
+                s.valid_fraction = 0.;
+                s.sector_z_m = [None; 3]
+            }
+            _ => {
+                let o = &mut s.objects[0];
+                o.moving = true;
+                o.direction = if id == "approach" {
+                    "approaching"
+                } else {
+                    "receding"
+                };
+                o.region.z = 1.4;
+            }
+        }
+        let s = Arc::new(s);
+        ai.submit(s.clone(), frame.clone(), Duration::ZERO);
+        let start = Instant::now();
+        loop {
+            if let Some(r) = ai.latest(&s)
+                && r.scene_id == id
+            {
+                println!("{} ms: {}", r.latency_ms, r.text);
+                assert!(r.success && r.text.contains(expected));
+                assert!((20..=40).contains(&r.text.split_whitespace().count()));
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(60), "{}", ai.status());
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+fn crossing(reverse: bool, small: bool) -> (Arc<SceneState>, Arc<xtion_vision::DepthFrame>) {
+    let mut frame = SyntheticSource::default().next_frame().unwrap().unwrap();
+    let (w, h) = (160, 120);
+    frame.info.width = w;
+    frame.info.height = h;
+    frame.info.intrinsics = xtion_vision::CameraIntrinsics::nominal(w, h);
+    frame.pixels = vec![4000; w * h];
+    let mut engine = Engine::default();
+    for step in 0..65 {
+        frame.info.ticks = step;
+        frame.info.arrival_ns = u64::from(step) * 100_000_000;
+        frame.pixels.fill(4000);
+        let mut x = 24 + (step as usize).saturating_sub(10) * 2;
+        x = if reverse { w - x } else { x };
+        if step >= 8 {
+            for y in 8..112 {
+                for u in x - 16..=x + 16 {
+                    let dx = u.abs_diff(x);
+                    let inside = if small {
+                        (50..66).contains(&y) && dx < 7
+                    } else {
+                        match y {
+                            8..25 => dx < 8,
+                            25..74 => dx < 16,
+                            _ => (2..13).contains(&dx),
+                        }
+                    };
+                    if inside {
+                        frame.pixels[y * w + u] = 2000;
+                    }
+                }
+            }
+        }
+        let scene = engine.observe(&frame);
+        if scene.events.iter().any(|e| {
+            e.passage.as_ref().is_some_and(|p| {
+                p.movement()
+                    == if reverse {
+                        "moved from right to left"
+                    } else {
+                        "moved from left to right"
+                    }
+            })
+        }) {
+            return (Arc::new(scene), Arc::new(frame));
+        }
+    }
+    panic!("no crossing was found");
+}
+#[test]
+fn semantic_claims_require_matching_direction_and_shape_evidence() {
+    for (reverse, small, subject, action, accept) in [
+        (
+            false,
+            false,
+            "possible person",
+            "moved from left to right",
+            true,
+        ),
+        (
+            true,
+            false,
+            "unknown shape",
+            "moved from left to right",
+            false,
+        ),
+        (
+            false,
+            true,
+            "possible person",
+            "moved from left to right",
+            false,
+        ),
+    ] {
+        let (s, f) = crossing(reverse, small);
+        let m = mock(move |_, b| {
+            if b["messages"][0]["content"].is_array() {
+                (
+                    500,
+                    json!({"error":{"message":"image input is not supported"}}),
+                )
+            } else {
+                chat(&json!({"subject":subject,"action":action}).to_string())
+            }
+        });
+        let mut a = worker(&m, true, 500);
+        a.submit(s.clone(), f, Duration::ZERO);
+        let r = poll(&a, &s);
+        assert_eq!(r.success, accept);
+        if accept {
+            assert!(r.text.starts_with("A person-like figure moved from left to right. The movement lasted 4.4 seconds, during which the camera recorded the same track in 45 separate observations."));
+            assert!((20..=40).contains(&r.text.split_whitespace().count()));
+            assert_eq!(r.supporting_ids.len(), 3);
+        }
+    }
+}
+#[test]
+fn configured_response_lengths_apply_to_published_reports() {
+    let (scene, frame) = job();
+    let m = mock(|_, _| chat("{\"claims\":[]}"));
+    for (min, max) in [(8, 20), (16, 29), (32, 38), (40, 46)] {
+        let mut c = Config::new(m.url.clone());
+        assert_eq!(c.refresh, Duration::from_secs(7));
+        c.model = Some("vision".into());
+        c.min_words = min;
+        c.max_words = max;
+        let mut a = Interpreter::start(c).unwrap();
+        a.submit(scene.clone(), frame.clone(), Duration::ZERO);
+        let r = poll(&a, &scene);
+        assert!(r.success);
+        assert!(
+            (min..=max).contains(&r.text.split_whitespace().count()),
+            "{}",
+            r.text
+        );
+        assert!(r.text.ends_with('.'));
+    }
+}
+#[test]
+#[ignore = "uses synthetic crossings and the local SmolLM3 endpoint"]
+fn local_semantic_crossings() {
+    for (reverse, small) in [(false, false), (true, false), (false, true)] {
+        let (s, f) = crossing(reverse, small);
+        let mut c = Config::new("http://localhost:8366/v1".into());
+        c.model = Some("smollm3-3b".into());
+        let mut a = Interpreter::start(c).unwrap();
+        a.submit(s.clone(), f, Duration::ZERO);
+        let start = Instant::now();
+        loop {
+            if let Some(r) = a.latest(&s) {
+                println!("{} ms: {} {:?}", r.latency_ms, r.text, r.supporting_ids);
+                assert!(r.success);
+                assert!(r.text.contains(if reverse {
+                    "from right to left"
+                } else {
+                    "from left to right"
+                }));
+                if small {
+                    assert!(!r.text.contains("person"));
+                }
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(50), "{}", a.status());
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+fn stationary_window(c: Config) -> Report {
+    let (sample, frame) = job();
+    let mut worker = Interpreter::start(c).unwrap();
+    let mut latest = sample.clone();
+    for second in 0..=36 {
+        let mut s = (*sample).clone();
+        s.ns = second * 1_000_000_000;
+        s.id = format!("window-{second}");
+        s.objects[0].observation_id = format!("obs-{second}");
+        s.objects[0].moving = false;
+        s.objects[0].region.z = 0.67 + (second % 2) as f64 * 0.01;
+        s.objects[0].region.center[0] = frame.info.width as f64 / 2.;
+        s.events.clear();
+        latest = Arc::new(s);
+        // Deliver new evidence at the window boundary even if the scene barely moves.
+        worker.submit(latest.clone(), frame.clone(), Duration::ZERO);
+    }
+    let start = Instant::now();
+    loop {
+        if let Some(r) = worker.latest(&latest)
+            && r.scene_id == "window-35"
+        {
+            return r;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(50),
+            "{}",
+            worker.status()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn temporal_request_excludes_expired_evidence_and_explains_jitter() {
+    let m = mock(|_, body| {
+        if body["messages"][0]["content"].is_array() {
+            return (
+                400,
+                json!({"error":{"message":"image input is not supported"}}),
+            );
+        }
+        let p = body["messages"][0]["content"].as_str().unwrap();
+        if p.contains("obs-35\"") {
+            assert!(p.contains("obs-5\"") && !p.contains("obs-4\""));
+            assert!(p.contains("Treat centimetre jitter"));
+        }
+        chat("{\"index\":0}")
+    });
+    let mut c = Config::new(m.url.clone());
+    c.model = Some("text".into());
+    let r = stationary_window(c);
+    assert!(
+        r.success && r.text.contains("stayed in the centre") && r.text.contains("30 seconds"),
+        "{}",
+        r.text
+    );
+    assert_eq!(r.supporting_ids, ["obs-5", "obs-35"]);
+    assert!((20..=40).contains(&r.text.split_whitespace().count()));
+}
+
+#[test]
+#[ignore = "requires the local SmolLM3 endpoint"]
+fn local_stationary_context() {
+    let mut c = Config::new("http://localhost:8366/v1".into());
+    c.model = Some("smollm3-3b".into());
+    let r = stationary_window(c);
+    println!("{}", r.text);
+    assert!(r.success && r.text.contains("30 seconds"), "{}", r.text);
+}
+
+#[test]
+fn rejected_bearer_is_redacted_from_the_transcript() {
+    let secret = "example-test-only-credential";
+    let server = mock(move |_, _| {
+        (
+            401,
+            json!({"error":{"message":format!("Rejected key {secret}")}}),
+        )
+    });
+    let transcript = Transcript::default();
+    let mut config = Config::new(server.url.clone());
+    config.model = Some("test".into());
+    config.api_key = Some(secret.to_owned());
+    config.transcript = Some(transcript.clone());
+    let mut worker = Interpreter::start(config).unwrap();
+    let (scene, frame) = job();
+    worker.submit(scene.clone(), frame, Duration::ZERO);
+    let report = poll(&worker, &scene);
+    assert!(!report.success && report.text.contains("401") && !report.text.contains(secret));
+    let log = transcript.snapshot();
+    assert_eq!(log.len(), 1);
+    assert!(!log[0].request.contains(secret));
+    assert!(log[0].response.as_deref().unwrap().contains("[redacted]"));
+    assert!(!log[0].response.as_deref().unwrap().contains(secret));
+}

@@ -63,3 +63,5 @@ pub mod geometry;
 pub mod image;
 pub mod perception;
 pub mod pipeline;
+
+pub mod trajectory;

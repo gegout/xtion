@@ -48,3 +48,11 @@ The application reopened the sensor after the soak. It processed 2,599 frames at
 The remaining instructions depend on the confirmed empty baseline and were deferred. A previous driver-only movement observation is documented in [native validation](validation.md). It does not verify this application’s guided checklist.
 
 An opt-in reuse test launched before the checklist process had finished releasing USB received the expected “Resource busy” error. After release, the same test passed all five cycles in 28.16 s. The test checks metric frames, at least 25 processed FPS, zero perception drops and a successful stop on each cycle.
+
+## Adjustable application capture and local model interpretation
+
+A read-only firmware query on the attached 5.8.22 device returned 30 FPS for VGA. The upstream 25 FPS preset is gated to older firmware. Xtion Vision can retain fewer frames before processing and recording while the native USB acquisition continues. Short live runs targeting 5, 15 and 30 retained FPS measured 5.15, 14.98 and 29.97 FPS respectively.
+
+With the localhost SmolLM3-3B endpoint and a target of 10 FPS, a 36-second session processed 355 frames at 10.01 FPS. Sampling intentionally omitted 707 frames. Both perception and recording queues reported zero overflow drops. Replay recovered all 355 frames. Two current model selections cited the same layout at distinct source frames (f103 and f243). In each case the recorded median depths matched the displayed 2.86 m left, 3.50 m centre and 2.33 m right within rounding.
+
+The opt-in `local_model_prioritizes_depth_evidence` test supplied four controlled observations to the actual model service. It selected approach for an approaching patch, retreat for a receding patch, the three-sector depth profile for a static scene, and insufficient coverage for a fully masked scene. These are semantic selection checks using synthetic inputs. Object identity and human activity were not established.
