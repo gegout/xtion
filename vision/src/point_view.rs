@@ -91,6 +91,7 @@ impl ColourBy {
 #[derive(Clone, Copy)]
 pub struct Splat {
     pub center: [i32; 2],
+    pub pixel: [usize; 2],
     pub depth: f64,
     pub rgb: [u8; 3],
 }
@@ -109,7 +110,7 @@ impl PointBuffer {
         colour_by: ColourBy,
     ) {
         self.points.clear();
-        for (_, p) in cloud.samples(stride) {
+        for ((u, v), p) in cloud.samples(stride) {
             if !(clip[0]..=clip[1]).contains(&p.z) {
                 continue;
             }
@@ -122,12 +123,24 @@ impl PointBuffer {
             let rgb = colour_by.sample(p, clip[1]);
             self.points.push(Splat {
                 center: [x as i32, y as i32],
+                pixel: [u, v],
                 depth,
                 rgb,
             });
         }
         self.points
             .sort_unstable_by(|a, b| b.depth.total_cmp(&a.depth));
+    }
+    /// Same footprint and near-over-far ordering as the displayed points.
+    pub fn pick(&self, at: [i32; 2], radius: i32) -> Option<[usize; 2]> {
+        self.points
+            .iter()
+            .rev()
+            .find(|p| {
+                p.center[0].abs_diff(at[0]) <= radius as u32
+                    && p.center[1].abs_diff(at[1]) <= radius as u32
+            })
+            .map(|p| p.pixel)
     }
     /// Painter order is shared with the GL mesh path so nearer points win.
     pub fn rasterize(&self, size: [usize; 2], radius: i32, rgb: &mut Vec<u8>) {
@@ -164,6 +177,7 @@ mod tests {
         for (depth, rgb) in [(3., [0, 0, 255]), (2., [255, 0, 0])] {
             buf.points.push(Splat {
                 center: [2, 2],
+                pixel: [2, 2],
                 depth,
                 rgb,
             });
