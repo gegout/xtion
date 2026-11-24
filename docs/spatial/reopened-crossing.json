@@ -1,0 +1,16 @@
+{
+  "frames": 2681,
+  "frames_losing_any_visible_id": 183,
+  "frames_with_80pct_dominant_region": 2386,
+  "frames_with_foreground": 2499,
+  "input": "/home/cgegout/projects/xtion/recordings/spatial-baseline/crossing.xtv",
+  "largest_id_switches_in_adjacent_nonempty_frames": 21,
+  "largest_id_switches_per_minute": 14.084335544607832,
+  "moving_events": 26,
+  "perception_mean_ms": 1.9410297497202547,
+  "perception_p95_ms": 2.5274669999999997,
+  "regions_mean": 1.2088772845953002,
+  "regions_p95": 2,
+  "score_from_frame": 0,
+  "seconds": 89.461089308
+}

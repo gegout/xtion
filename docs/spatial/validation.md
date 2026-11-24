@@ -37,3 +37,5 @@ cargo run --locked --release -p xtion-vision --example spatial_baseline -- "$rec
 ```
 
 The experimental workspace passed 61 tests; the production workspace passed 60. Each run skipped nine opt-in tests. Rebuilding the production example reproduced every non-timing baseline field on all three local recordings.
+
+The [reopened Phase 1 investigation](phase1-reopened.md) adds silhouette-reference comparisons, held-out frames and a candidate that retains track membership across a changing depth boundary.

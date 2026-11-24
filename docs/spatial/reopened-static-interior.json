@@ -1,0 +1,16 @@
+{
+  "frames": 224,
+  "frames_losing_any_visible_id": 3,
+  "frames_with_80pct_dominant_region": 11,
+  "frames_with_foreground": 11,
+  "input": "/home/cgegout/projects/xtion/recordings/spatial-baseline/static-interior.xtv",
+  "largest_id_switches_in_adjacent_nonempty_frames": 0,
+  "largest_id_switches_per_minute": 0.0,
+  "moving_events": 2,
+  "perception_mean_ms": 1.5157922723214285,
+  "perception_p95_ms": 3.308072,
+  "regions_mean": 0.05357142857142857,
+  "regions_p95": 0,
+  "score_from_frame": 0,
+  "seconds": 7.441249994
+}

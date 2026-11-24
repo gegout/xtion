@@ -1,0 +1,326 @@
+{
+  "entry": {
+    "production": {
+      "333": {
+        "target": 4502,
+        "recovered": 3824,
+        "background": 21,
+        "other_tracks": 509,
+        "missed": 169
+      },
+      "350": {
+        "target": 7209,
+        "recovered": 7114,
+        "background": 6,
+        "other_tracks": 0,
+        "missed": 95
+      },
+      "372": {
+        "target": 8539,
+        "recovered": 8238,
+        "background": 5,
+        "other_tracks": 0,
+        "missed": 301
+      },
+      "pooled": {
+        "target": 20250,
+        "recovered": 19176,
+        "background": 32,
+        "other_tracks": 509,
+        "missed": 565,
+        "recall": 0.946962962962963,
+        "precision": 0.9983340274885465
+      }
+    },
+    "noise": {
+      "333": {
+        "target": 4502,
+        "recovered": 4056,
+        "background": 21,
+        "other_tracks": 398,
+        "missed": 48
+      },
+      "350": {
+        "target": 7209,
+        "recovered": 6907,
+        "background": 6,
+        "other_tracks": 210,
+        "missed": 92
+      },
+      "372": {
+        "target": 8539,
+        "recovered": 8242,
+        "background": 2,
+        "other_tracks": 59,
+        "missed": 238
+      },
+      "pooled": {
+        "target": 20250,
+        "recovered": 19205,
+        "background": 29,
+        "other_tracks": 667,
+        "missed": 378,
+        "recall": 0.948395061728395,
+        "precision": 0.9984922533014453
+      }
+    },
+    "area": {
+      "333": {
+        "target": 4502,
+        "recovered": 4056,
+        "background": 21,
+        "other_tracks": 398,
+        "missed": 48
+      },
+      "350": {
+        "target": 7209,
+        "recovered": 6907,
+        "background": 6,
+        "other_tracks": 210,
+        "missed": 92
+      },
+      "372": {
+        "target": 8539,
+        "recovered": 8242,
+        "background": 2,
+        "other_tracks": 59,
+        "missed": 238
+      },
+      "pooled": {
+        "target": 20250,
+        "recovered": 19205,
+        "background": 29,
+        "other_tracks": 667,
+        "missed": 378,
+        "recall": 0.948395061728395,
+        "precision": 0.9984922533014453
+      }
+    },
+    "growth": {
+      "333": {
+        "target": 4502,
+        "recovered": 4104,
+        "background": 21,
+        "other_tracks": 398,
+        "missed": 0
+      },
+      "350": {
+        "target": 7209,
+        "recovered": 6998,
+        "background": 6,
+        "other_tracks": 210,
+        "missed": 1
+      },
+      "372": {
+        "target": 8539,
+        "recovered": 8479,
+        "background": 6,
+        "other_tracks": 60,
+        "missed": 0
+      },
+      "pooled": {
+        "target": 20250,
+        "recovered": 19581,
+        "background": 33,
+        "other_tracks": 668,
+        "missed": 1,
+        "recall": 0.9669629629629629,
+        "precision": 0.998317528296115
+      }
+    },
+    "retained": {
+      "333": {
+        "target": 4502,
+        "recovered": 4247,
+        "background": 21,
+        "other_tracks": 255,
+        "missed": 0
+      },
+      "350": {
+        "target": 7209,
+        "recovered": 7209,
+        "background": 6,
+        "other_tracks": 0,
+        "missed": 0
+      },
+      "372": {
+        "target": 8539,
+        "recovered": 8538,
+        "background": 10,
+        "other_tracks": 1,
+        "missed": 0
+      },
+      "pooled": {
+        "target": 20250,
+        "recovered": 19994,
+        "background": 37,
+        "other_tracks": 256,
+        "missed": 0,
+        "recall": 0.987358024691358,
+        "precision": 0.9981528630622535
+      }
+    }
+  },
+  "crossing": {
+    "production": {
+      "1830": {
+        "target": 4014,
+        "recovered": 53,
+        "background": 0,
+        "other_tracks": 26,
+        "missed": 3935
+      },
+      "2150": {
+        "target": 4215,
+        "recovered": 61,
+        "background": 0,
+        "other_tracks": 64,
+        "missed": 4090
+      },
+      "2600": {
+        "target": 4200,
+        "recovered": 63,
+        "background": 0,
+        "other_tracks": 68,
+        "missed": 4069
+      },
+      "pooled": {
+        "target": 12429,
+        "recovered": 177,
+        "background": 0,
+        "other_tracks": 158,
+        "missed": 12094,
+        "recall": 0.014240888245232923,
+        "precision": 1.0
+      }
+    },
+    "noise": {
+      "1830": {
+        "target": 4014,
+        "recovered": 661,
+        "background": 0,
+        "other_tracks": 190,
+        "missed": 3163
+      },
+      "2150": {
+        "target": 4215,
+        "recovered": 653,
+        "background": 0,
+        "other_tracks": 206,
+        "missed": 3356
+      },
+      "2600": {
+        "target": 4200,
+        "recovered": 639,
+        "background": 0,
+        "other_tracks": 215,
+        "missed": 3346
+      },
+      "pooled": {
+        "target": 12429,
+        "recovered": 1953,
+        "background": 0,
+        "other_tracks": 611,
+        "missed": 9865,
+        "recall": 0.15713251267197684,
+        "precision": 1.0
+      }
+    },
+    "area": {
+      "1830": {
+        "target": 4014,
+        "recovered": 661,
+        "background": 0,
+        "other_tracks": 190,
+        "missed": 3163
+      },
+      "2150": {
+        "target": 4215,
+        "recovered": 653,
+        "background": 0,
+        "other_tracks": 194,
+        "missed": 3368
+      },
+      "2600": {
+        "target": 4200,
+        "recovered": 639,
+        "background": 0,
+        "other_tracks": 205,
+        "missed": 3356
+      },
+      "pooled": {
+        "target": 12429,
+        "recovered": 1953,
+        "background": 0,
+        "other_tracks": 589,
+        "missed": 9887,
+        "recall": 0.15713251267197684,
+        "precision": 1.0
+      }
+    },
+    "growth": {
+      "1830": {
+        "target": 4014,
+        "recovered": 4014,
+        "background": 186,
+        "other_tracks": 0,
+        "missed": 0
+      },
+      "2150": {
+        "target": 4215,
+        "recovered": 4215,
+        "background": 131,
+        "other_tracks": 0,
+        "missed": 0
+      },
+      "2600": {
+        "target": 4200,
+        "recovered": 4197,
+        "background": 131,
+        "other_tracks": 0,
+        "missed": 3
+      },
+      "pooled": {
+        "target": 12429,
+        "recovered": 12426,
+        "background": 448,
+        "other_tracks": 0,
+        "missed": 3,
+        "recall": 0.9997586290127927,
+        "precision": 0.9652011806742271
+      }
+    },
+    "retained": {
+      "1830": {
+        "target": 4014,
+        "recovered": 4014,
+        "background": 186,
+        "other_tracks": 0,
+        "missed": 0
+      },
+      "2150": {
+        "target": 4215,
+        "recovered": 4215,
+        "background": 131,
+        "other_tracks": 0,
+        "missed": 0
+      },
+      "2600": {
+        "target": 4200,
+        "recovered": 4197,
+        "background": 131,
+        "other_tracks": 0,
+        "missed": 3
+      },
+      "pooled": {
+        "target": 12429,
+        "recovered": 12426,
+        "background": 448,
+        "other_tracks": 0,
+        "missed": 3,
+        "recall": 0.9997586290127927,
+        "precision": 0.9652011806742271
+      }
+    }
+  }
+}
