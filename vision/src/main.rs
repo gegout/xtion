@@ -44,6 +44,8 @@ fn main() {
     }
 }
 struct Output {
+    sidecar: Option<xtion_vision::sidecar::Writer>,
+    chat: xtion_vision::ai::Transcript,
     labels: xtion_vision::semantic::HypothesisStore,
     question: Option<String>,
     ai: Option<Interpreter>,
@@ -85,6 +87,13 @@ impl Output {
             &mut graph,
             report.as_ref().map_or(&[], |r| r.label_votes.as_slice()),
         );
+        if let Some(writer) = &mut self.sidecar {
+            writer.push(
+                Arc::new(graph.clone()),
+                report.clone(),
+                self.chat.snapshot(),
+            );
+        }
         let mut w = self.stdout.lock();
         if let Some(q) = &self.question {
             writeln!(
@@ -119,6 +128,14 @@ fn run() -> Result<()> {
     if args.iter().any(|v| v == "--help" || v == "-h") {
         println!("{HELP}");
         return Ok(());
+    }
+    if let [mode, path] = args.as_slice()
+        && mode == "--play-semantics"
+    {
+        return xtion_vision::sidecar::playback(
+            BufReader::new(File::open(path)?),
+            BufWriter::new(io::stdout().lock()),
+        );
     }
     let mut idx = 0;
     while idx < args.len() {
@@ -276,7 +293,16 @@ fn run() -> Result<()> {
     let done = || {
         stop.load(Ordering::Acquire) || seconds.is_some_and(|s| start.elapsed().as_secs_f64() >= s)
     };
+    let chat = xtion_vision::ai::Transcript::default();
+    if let Some(c) = &mut config {
+        c.transcript = Some(chat.clone());
+    }
     let mut out = Output {
+        chat,
+        sidecar: record
+            .as_ref()
+            .map(|p| xtion_vision::sidecar::Writer::new(p.as_ref()))
+            .transpose()?,
         labels: Default::default(),
         question: val("--question").map(str::to_owned),
         refresh: config.as_ref().map(|c| c.refresh).unwrap_or_default(),
@@ -357,6 +383,9 @@ fn run() -> Result<()> {
         if let Some(w) = writer {
             w.finish()?;
         }
+    }
+    if let Some(writer) = &mut out.sidecar {
+        writer.finish()?;
     }
     Ok(())
 }

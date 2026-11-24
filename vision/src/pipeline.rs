@@ -51,20 +51,20 @@ impl FrameSampler {
         self.previous.replace(key) != Some(key) || fps == 30
     }
 }
-struct Queue<T> {
+pub(crate) struct Queue<T> {
     state: Mutex<(VecDeque<T>, bool)>,
     wake: Condvar,
     drops: Arc<AtomicU64>,
 }
 impl<T> Queue<T> {
-    fn new(drops: Arc<AtomicU64>) -> Arc<Self> {
+    pub(crate) fn new(drops: Arc<AtomicU64>) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::default(),
             wake: Condvar::new(),
             drops,
         })
     }
-    fn push(&self, item: T) {
+    pub(crate) fn push(&self, item: T) {
         let mut state = self.state.lock().unwrap();
         if state.0.len() >= 4 {
             state.0.pop_front();
@@ -73,7 +73,7 @@ impl<T> Queue<T> {
         state.0.push_back(item);
         self.wake.notify_one();
     }
-    fn pop(&self) -> Option<T> {
+    pub(crate) fn pop(&self) -> Option<T> {
         let guard = self.state.lock().unwrap();
         let mut state = self
             .wake
@@ -81,7 +81,7 @@ impl<T> Queue<T> {
             .unwrap();
         state.0.pop_front()
     }
-    fn close(&self) {
+    pub(crate) fn close(&self) {
         self.state.lock().unwrap().1 = true;
         self.wake.notify_all();
     }

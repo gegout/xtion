@@ -137,6 +137,8 @@ pub fn launch(opts: Options) -> Result<()> {
     .map_err(|e| e.to_string().into())
 }
 struct Viewer {
+    sidecar: Option<xtion_vision::sidecar::Writer>,
+    sidecar_path: Option<String>,
     labels: xtion_vision::semantic::HypothesisStore,
     question: String,
     answer: String,
@@ -230,6 +232,8 @@ impl Viewer {
             .unwrap_or_default();
         Self {
             benchmark: o.benchmark,
+            sidecar: None,
+            sidecar_path: None,
             frozen: None,
             labels: Default::default(),
             question: String::new(),
@@ -626,6 +630,20 @@ impl eframe::App for Viewer {
                 std::sync::Arc::make_mut(&mut s.graph),
                 ai.as_ref().map_or(&[], |r| r.label_votes.as_slice()),
             );
+        }
+        let recording = self.pipe.record.lock().unwrap().clone();
+        if recording != self.sidecar_path {
+            self.sidecar_path = recording.clone();
+            self.sidecar = None;
+            if let Some(path) = recording {
+                match xtion_vision::sidecar::Writer::new(path.as_ref()) {
+                    Ok(w) => self.sidecar = Some(w),
+                    Err(e) => self.error = e.to_string(),
+                }
+            }
+        }
+        if let (Some(w), Some(s)) = (&mut self.sidecar, &snap) {
+            w.push(s.graph.clone(), ai.clone(), self.chat.snapshot());
         }
         if let Some(r) = ai
             && r.success
